@@ -44,7 +44,6 @@ const STORAGE_DIR = join(xdgDataDir, 'opencode', 'storage', 'daytona')
 const REPO_PATH = '/home/daytona/project'
 
 setLogFilePath(LOG_FILE)
-
 const sessionManager = new DaytonaSessionManager(
   process.env.DAYTONA_API_KEY || '',
   STORAGE_DIR,

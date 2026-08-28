@@ -10,7 +10,9 @@
     "build": "npm run build -w @veris-ai/daytona && npm run build -w @veris-ai/daytona-opencode",
     "typecheck": "npm run typecheck -w @veris-ai/daytona && npm run typecheck -w @veris-ai/daytona-opencode",
     "test": "npm run test -w @veris-ai/daytona",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "version:set": "node scripts/version.mjs",
+    "release": "npm run build && npm publish -w @veris-ai/daytona && npm publish -w @veris-ai/daytona-opencode"
   },
   "devDependencies": {
     "tsx": "^4.23.12"

@@ -38,6 +38,22 @@ section, one credentials check — so that upstream changes stay easy to take.
 Keep it that way: if a change wants to live in a forked file, check first
 whether it belongs in `@veris-ai/daytona` instead.
 
+## Releasing
+
+Both packages version together, and the plugin depends on an exact-minor range
+of the SDK, so bumping one without the other publishes a plugin that resolves an
+SDK it was never built against. `version:set` does both halves:
+
+```sh
+npm run version:set 0.2.0     # both package.json files, and the cross-dependency
+# update CHANGELOG.md
+git commit -am "chore: 0.2.0" && git tag v0.2.0
+npm run release               # build, then publish both
+```
+
+Both packages are scoped, so both carry `publishConfig.access: public` — without
+it `npm publish` refuses outright.
+
 ## Conventions
 
 - [Conventional Commits](https://www.conventionalcommits.org/) for commit
