@@ -66,20 +66,31 @@ stripped, an allowlisted host is still intercepted rather than dialled.
 **Two things still happen inside the sandbox**, both at create time and both
 before `create()` resolves:
 
-1. **The gateway's CA is installed.** This is not optional. The gateway
-   terminates TLS and presents a certificate it forged for the vendor hostname;
-   a client that does not trust the Veris CA rejects it, and the call dies on
-   certificate validation. No CA means no interception — loudly, never silently.
+1. **The gateway's CA is installed** — defensively, and it is worth being
+   precise about why, because on Daytona today it is not what makes TLS work.
 
-   Rather than require anything of the image, a bundle is assembled inside the
-   sandbox — the distribution's public roots plus ours — and every trust
-   variable (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
-   `NODE_EXTRA_CA_CERTS`, and a dozen more) is injected at create time pointing
-   at it. Where root and the tooling exist, the system store, the JVM cacerts
-   and NSS databases are updated too — best-effort, for stacks like Java that
-   honour no CA environment variable at all. If the bundle cannot be assembled,
-   `create()` fails at `ca-install` rather than handing back a sandbox that
-   would fail mysteriously later.
+   A MITM gateway presents a certificate it forged for the vendor hostname, and
+   the client that validates it must trust the signing CA. On Daytona there are
+   *two* proxies in the chain, and the client's TLS peer is the near one:
+   Daytona's own proxy terminates TLS with a certificate signed by **its** CA,
+   which the image already trusts, and re-originates to the Veris gateway.
+   Verified — a vendor call succeeds with `--cacert` naming only Daytona's CA.
+
+   So the Veris CA is currently not in the validation path. It is installed
+   anyway, because the moment Daytona tunnels `CONNECT` end-to-end instead of
+   intercepting it — the ordinary behaviour for an HTTP proxy — the gateway's
+   certificate reaches the client directly and nothing works without it. The
+   cost is one upload and one shell command; the cost of being wrong is total.
+
+   No image requirements: a bundle is assembled inside the sandbox from the
+   distribution's public roots plus ours, and the trust variables point at it.
+   Daytona overrides the common ones (`SSL_CERT_FILE`, `CURL_CA_BUNDLE`,
+   `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`) with its own CA, which is
+   correct for its proxy; the dozen it does not set — `PIP_CERT`,
+   `CARGO_HTTP_CAINFO`, `DENO_CERT` and friends — keep pointing at our bundle,
+   which contains both CAs and every public root, so those tools verify rather
+   than break. The system store, JVM cacerts and NSS databases are updated too
+   where root and tooling allow.
 
 2. A **canary probe** dials a reserved hostname only the gateway answers, whose
    body carries the twin id. Green proves in one request that egress really is
@@ -195,9 +206,10 @@ that deleting the sandbox leaves no twin behind.
   accepts only http/https outbound proxies (`Unsupported outbound proxy scheme
   "socks5h"`), so a gateway offering SOCKS5 alone cannot be used at all. Without
   it `create()` fails at `credential-mint` naming exactly that.
-- **A client that reads neither a CA environment variable nor a trust store
-  cannot be intercepted.** It fails TLS rather than reaching the real vendor, so
-  this is a broken call, never a silent one — but it is a broken call.
+- **Interception currently depends on Daytona intercepting TLS itself.** The
+  client's certificate chain terminates at Daytona's CA, not ours. If Daytona
+  ever tunnels `CONNECT` end-to-end instead, the Veris CA becomes load-bearing —
+  it is already installed for that reason, but that path is untested.
 - **The OpenCode plugin has not been driven end to end.** The SDK path is
   verified by `npm run smoke`; no `opencode` session has been run against the
   plugin itself.
