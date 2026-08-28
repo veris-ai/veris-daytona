@@ -132,7 +132,7 @@ export class DaytonaSessionManager {
     // the difference — so an unset key has to stop the session, not quietly
     // change what it is doing.
     for (const [name, hint] of [
-      ['VERIS_API_KEY', 'Get one at https://app.veris.ai'],
+      ['VERIS_API_KEY', 'Get one at https://studio.veris.ai'],
       ['VERIS_ENVIRONMENT_ID', 'A Veris environment decides which vendor services your twin gets'],
     ] as const) {
       if (process.env[name]) continue

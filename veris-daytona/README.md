@@ -21,7 +21,7 @@ Both, because `@daytona/sdk` is a peer dependency — that is what keeps
 | variable | where from |
 |---|---|
 | `DAYTONA_API_KEY` | [app.daytona.io/dashboard/keys](https://app.daytona.io/dashboard/keys) |
-| `VERIS_API_KEY` | your Veris dashboard |
+| `VERIS_API_KEY` | [studio.veris.ai](https://studio.veris.ai) |
 | `VERIS_ENVIRONMENT_ID` | a Veris environment — it decides which vendor services your twin gets |
 
 ## Use

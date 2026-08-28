@@ -363,7 +363,7 @@ function resolveCoordinates(v: VerisOpts): ResolvedCoordinates {
   if (!apiKey) {
     throw new MissingCredentialsError(
       'no Veris API key: set VERIS_API_KEY in your environment, or pass veris.apiKey. ' +
-      'Get one at https://app.veris.ai',
+      'Get one at https://studio.veris.ai',
       { phase: 'credentials' })
   }
   return {
