@@ -66,8 +66,22 @@ stripped, an allowlisted host is still intercepted rather than dialled.
 **Two things still happen inside the sandbox**, both at create time and both
 before `create()` resolves:
 
-1. the gateway's CA is installed, so the forged vendor certificates validate;
-2. a **canary probe** dials a reserved hostname only the gateway answers, whose
+1. **The gateway's CA is installed.** This is not optional. The gateway
+   terminates TLS and presents a certificate it forged for the vendor hostname;
+   a client that does not trust the Veris CA rejects it, and the call dies on
+   certificate validation. No CA means no interception — loudly, never silently.
+
+   Rather than require anything of the image, a bundle is assembled inside the
+   sandbox — the distribution's public roots plus ours — and every trust
+   variable (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
+   `NODE_EXTRA_CA_CERTS`, and a dozen more) is injected at create time pointing
+   at it. Where root and the tooling exist, the system store, the JVM cacerts
+   and NSS databases are updated too — best-effort, for stacks like Java that
+   honour no CA environment variable at all. If the bundle cannot be assembled,
+   `create()` fails at `ca-install` rather than handing back a sandbox that
+   would fail mysteriously later.
+
+2. A **canary probe** dials a reserved hostname only the gateway answers, whose
    body carries the twin id. Green proves in one request that egress really is
    tunnelled, that the credential demuxed to the right twin, and that the CA
    install worked. Dialled outside the tunnel there is no listener, so it cannot
@@ -109,8 +123,7 @@ await sbx.veris.assertTouched('stripe')
 await sbx.delete()                            // deletes the twin too
 ```
 
-It imposes no image. Bring whatever your code needs — the only requirement is
-`ca-certificates`, so the gateway CA can be trusted:
+It imposes no image. Bring whatever your code needs:
 
 ```ts
 const sbx = await daytona.create({ image: 'python:3.12-slim' })
@@ -178,15 +191,16 @@ that deleting the sandbox leaves no twin behind.
 
 ## Status and known limitations
 
-- **Requires a control plane that returns `connect_address`.** Daytona accepts
-  only http/https outbound proxies, so a gateway offering SOCKS5 alone cannot be
-  used. Without it `create()` fails at `credential-mint` naming exactly that.
-- **The gateway path has not been run end to end**, because the HTTP CONNECT
-  listener is still landing. Everything up to the mint is exercised by
-  `npm run smoke`, which currently stops at that error by design.
-- **The OpenCode plugin has not been driven end to end.**
-- **The sandbox image needs `ca-certificates`.** Without it the CA install fails
-  loudly at `ca-install` rather than leaving TLS quietly broken.
+- **Requires a control plane that serves an HTTP CONNECT gateway.** Daytona
+  accepts only http/https outbound proxies (`Unsupported outbound proxy scheme
+  "socks5h"`), so a gateway offering SOCKS5 alone cannot be used at all. Without
+  it `create()` fails at `credential-mint` naming exactly that.
+- **A client that reads neither a CA environment variable nor a trust store
+  cannot be intercepted.** It fails TLS rather than reaching the real vendor, so
+  this is a broken call, never a silent one — but it is a broken call.
+- **The OpenCode plugin has not been driven end to end.** The SDK path is
+  verified by `npm run smoke`; no `opencode` session has been run against the
+  plugin itself.
 - **QUIC/HTTP3 and ECH are not intercepted.** The gateway relays TCP; both are
   reported in the receipt's `leaks` rather than silently omitted.
 

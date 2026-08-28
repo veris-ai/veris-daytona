@@ -6,49 +6,71 @@
  *  rebuilds the bundle with our cert still included. */
 export const CA_CERT_PATH = '/usr/local/share/ca-certificates/veris-ca.crt'
 
-/** The rebuilt system bundle every path-valued trust var points at. */
+/** The distribution's own bundle, when it has one. */
 export const SYSTEM_BUNDLE = '/etc/ssl/certs/ca-certificates.crt'
 
 /**
- * The vendored trust-env fallback. The control plane serves the same map
- * (`trust_env` in the egress-credential response) as the source of truth so
- * new tools get covered by a control-plane deploy; the served copy wins.
+ * Our CA alone, world-readable, written before anything needs it.
+ * NODE_EXTRA_CA_CERTS is additive by design and takes this.
+ */
+export const VERIS_CA_FILE = '/tmp/veris-ca.crt'
+
+/**
+ * The public roots plus ours, concatenated by us.
  *
- * Every var is path-valued and points at the SYSTEM bundle (Veris CA + all
- * public roots — passthrough hosts keep verifying), except NODE_EXTRA_CA_CERTS
- * which is additive by design and takes the single cert.
+ * Every path-valued trust var points here rather than at SYSTEM_BUNDLE, because
+ * `update-ca-certificates` is not always present — Daytona's default image does
+ * not ship it — and a var pointing at a bundle that was never rebuilt trusts
+ * everything except the one CA that matters. We write this file ourselves, so
+ * it is correct whether or not the distribution has the tooling.
+ */
+export const VERIS_BUNDLE = '/tmp/veris-ca-bundle.crt'
+
+/**
+ * The trust variables injected into every sandbox at create time.
+ *
+ * This is the load-bearing half of CA trust: the gateway forges a leaf for each
+ * vendor hostname, and a client that does not trust the Veris CA rejects it, so
+ * without these (or the store install below) every HTTPS vendor call fails on
+ * certificate validation.
+ *
+ * Every var is path-valued and points at VERIS_BUNDLE (public roots + ours, so
+ * passthrough hosts keep verifying), except NODE_EXTRA_CA_CERTS, which is
+ * additive by design and takes the single cert.
  */
 export function vendoredTrustEnv(): Record<string, string> {
   return {
-    SSL_CERT_FILE: SYSTEM_BUNDLE,
-    REQUESTS_CA_BUNDLE: SYSTEM_BUNDLE,
-    CURL_CA_BUNDLE: SYSTEM_BUNDLE,
-    GIT_SSL_CAINFO: SYSTEM_BUNDLE,
-    AWS_CA_BUNDLE: SYSTEM_BUNDLE,
-    CARGO_HTTP_CAINFO: SYSTEM_BUNDLE,
-    DENO_CERT: SYSTEM_BUNDLE,
-    PIP_CERT: SYSTEM_BUNDLE,
-    npm_config_cafile: SYSTEM_BUNDLE,
-    GRPC_DEFAULT_SSL_ROOTS_FILE_PATH: SYSTEM_BUNDLE,
-    BUNDLE_SSL_CA_CERT: SYSTEM_BUNDLE,
-    COMPOSER_CAFILE: SYSTEM_BUNDLE,
-    HEX_CACERTS_PATH: SYSTEM_BUNDLE,
-    JULIA_SSL_CA_ROOTS_PATH: SYSTEM_BUNDLE,
-    NIX_SSL_CERT_FILE: SYSTEM_BUNDLE,
-    PERL_LWP_SSL_CA_FILE: SYSTEM_BUNDLE,
-    CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE: SYSTEM_BUNDLE,
-    NODE_EXTRA_CA_CERTS: CA_CERT_PATH,
+    SSL_CERT_FILE: VERIS_BUNDLE,
+    REQUESTS_CA_BUNDLE: VERIS_BUNDLE,
+    CURL_CA_BUNDLE: VERIS_BUNDLE,
+    GIT_SSL_CAINFO: VERIS_BUNDLE,
+    AWS_CA_BUNDLE: VERIS_BUNDLE,
+    CARGO_HTTP_CAINFO: VERIS_BUNDLE,
+    DENO_CERT: VERIS_BUNDLE,
+    PIP_CERT: VERIS_BUNDLE,
+    npm_config_cafile: VERIS_BUNDLE,
+    GRPC_DEFAULT_SSL_ROOTS_FILE_PATH: VERIS_BUNDLE,
+    BUNDLE_SSL_CA_CERT: VERIS_BUNDLE,
+    COMPOSER_CAFILE: VERIS_BUNDLE,
+    HEX_CACERTS_PATH: VERIS_BUNDLE,
+    JULIA_SSL_CA_ROOTS_PATH: VERIS_BUNDLE,
+    NIX_SSL_CERT_FILE: VERIS_BUNDLE,
+    PERL_LWP_SSL_CA_FILE: VERIS_BUNDLE,
+    CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE: VERIS_BUNDLE,
+    NODE_EXTRA_CA_CERTS: VERIS_CA_FILE,
   }
 }
 
-/** Probe that the template can host the CA install at all. Prints ok/missing. */
-export const CA_TOOLING_PROBE = 'command -v update-ca-certificates >/dev/null 2>&1 && echo ok || echo missing'
-
 /**
- * The one root command of gateway mode. Rebuilds the system bundle with the
- * Veris CA (already written to CA_CERT_PATH), then best-effort extras:
- * the JVM cacerts import (`|| true`: no Java → skipped), and NSS databases
- * for browser stacks when certutil exists (never fatal).
+ * The store-based install, for stacks that read a trust store rather than an
+ * env var — a Java client honours no CA variable at all. Rebuilds the system
+ * bundle with the Veris CA (already at CA_CERT_PATH), imports it into the JVM
+ * cacerts (`|| true`: no Java → skipped), and adds it to NSS databases when
+ * certutil exists.
+ *
+ * Entirely best-effort: it needs root and tooling the image may not have, which
+ * is why VERIS_BUNDLE plus the trust variables — not this — is what actually
+ * makes interception work.
  */
 export const CA_INSTALL_CMD = [
   'update-ca-certificates',

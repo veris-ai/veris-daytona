@@ -11,7 +11,7 @@
 // tunnel is actually live before anyone trusts a receipt.
 import type { Sandbox } from '@daytona/sdk'
 import { ReceiptIntegrityError, SnapshotUnsupportedError, VerisError } from './errors'
-import { CA_CERT_PATH, CA_INSTALL_CMD, CA_TOOLING_PROBE } from './trust'
+import { CA_CERT_PATH, CA_INSTALL_CMD, SYSTEM_BUNDLE, VERIS_BUNDLE, VERIS_CA_FILE } from './trust'
 
 /** A canary hostname must look like a hostname before it goes in a shell command. */
 const HOSTNAME_RE = /^[A-Za-z0-9.-]+$/
@@ -45,36 +45,96 @@ const sh = (sandbox: Sandbox, cmd: string, timeoutSec = 60) =>
  * control plane, and an unchecked value here would land in a URL and then in
  * every client's proxy configuration.
  */
-export function gatewayProxyUrl(connectAddress: string, username: string): string {
-  if (!HOSTPORT_RE.test(connectAddress)) {
+export function gatewayProxyUrl(credential: {
+  http_proxy_url?: string
+  connect_address?: string
+  username: string
+}): string {
+  // The gateway's own URL wins when it serves one. It knows its auth format —
+  // the password is the twin id, not a placeholder — and a locally built URL
+  // that guesses wrong authenticates as nobody.
+  if (credential.http_proxy_url) return assertProxyUrl(credential.http_proxy_url)
+
+  if (!credential.connect_address || !HOSTPORT_RE.test(credential.connect_address)) {
     throw new VerisError(
-      `the control plane returned a malformed gateway address: ${JSON.stringify(connectAddress)} ` +
-      `(expected host:port)`,
+      `the control plane returned a malformed gateway address: ` +
+      `${JSON.stringify(credential.connect_address)} (expected host:port)`,
       { phase: 'credential-mint' })
   }
-  return `http://${encodeURIComponent(username)}:x@${connectAddress}`
-}
-
-/** Drop the CA on disk so a client can --cacert it even if the system install is declined. */
-export async function writeCa(sandbox: Sandbox, caPem: string): Promise<void> {
-  await sandbox.fs.uploadFile(Buffer.from(caPem, 'utf8'), CA_CERT_PATH)
+  return `http://${encodeURIComponent(credential.username)}:x@${credential.connect_address}`
 }
 
 /**
- * Trust the gateway CA system-wide: probe the tooling, then one root command.
- *
- * Without this every HTTPS call to a vendor host fails certificate validation,
- * because the gateway presents a leaf it forged for that hostname.
+ * A proxy URL from the control plane, before it becomes every client's egress
+ * configuration. Untrusted input: it must parse, name a port, and speak a
+ * scheme Daytona accepts — it rejects anything but http/https outright.
  */
-export async function installCa(sandbox: Sandbox): Promise<void> {
-  const probe = await sh(sandbox, CA_TOOLING_PROBE, 60).catch(() => ({ exitCode: 1, result: '' }))
-  if (!(probe.result ?? '').includes('ok')) {
+function assertProxyUrl(raw: string): string {
+  let u: URL
+  try { u = new URL(raw) } catch {
+    throw new VerisError(
+      `the control plane returned an unparseable gateway proxy URL: ${JSON.stringify(raw)}`,
+      { phase: 'credential-mint' })
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    throw new VerisError(
+      `the gateway proxy URL uses scheme "${u.protocol.replace(':', '')}", and Daytona accepts ` +
+      `only http or https outbound proxies`,
+      { phase: 'credential-mint' })
+  }
+  if (!u.hostname || !u.port) {
+    throw new VerisError(
+      `the gateway proxy URL is missing a host or port: ${JSON.stringify(raw)}`,
+      { phase: 'credential-mint' })
+  }
+  return raw
+}
+
+/**
+ * Make the gateway's CA trusted, without requiring anything of the image.
+ *
+ * Every HTTPS call to a vendor host would otherwise fail validation, because
+ * the gateway presents a leaf it forged for that hostname.
+ *
+ * The obvious approach — drop the cert in /usr/local/share/ca-certificates and
+ * run update-ca-certificates — needs root AND that tool, and Daytona's default
+ * image has neither. So the authoritative artefact is a bundle we build
+ * ourselves at a world-writable path: the distribution's roots (when it has
+ * any) plus ours. Every trust variable injected at create time points there, so
+ * it is correct regardless of what the image ships.
+ *
+ * The system-store install still runs when it can, for anything that reads the
+ * store directly rather than honouring the variables. It is best-effort.
+ */
+export async function installCa(sandbox: Sandbox, caPem: string): Promise<void> {
+  await sandbox.fs.uploadFile(Buffer.from(caPem, 'utf8'), VERIS_CA_FILE)
+
+  const script = [
+    `chmod 0644 ${VERIS_CA_FILE}`,
+    // Public roots first so they keep working; ours appended. `cat` of a
+    // missing file is tolerated — an image with no roots at all still gets a
+    // bundle containing the one CA that matters here.
+    `{ cat ${SYSTEM_BUNDLE} 2>/dev/null; cat ${VERIS_CA_FILE}; } > ${VERIS_BUNDLE}`,
+    `chmod 0644 ${VERIS_BUNDLE}`,
+    // Best-effort, for the stacks that read a store rather than a variable:
+    // the system bundle, the JVM truststore, and NSS databases. All of it needs
+    // root and tooling that may not be there, so none of it is load-bearing —
+    // but a Java client honours no CA env var at all, so where we CAN do it,
+    // we should.
+    `SUDO=; [ "$(id -u)" = 0 ] || SUDO="sudo -n"`,
+    `($SUDO install -m 0644 -D ${VERIS_CA_FILE} ${CA_CERT_PATH} 2>/dev/null && ` +
+      `$SUDO sh -c ${shellQuote(CA_INSTALL_CMD)} 2>/dev/null) || true`,
+    // The bundle is the load-bearing one: fail loudly if it is not there.
+    `[ -s ${VERIS_BUNDLE} ] && echo __VERIS_CA_OK__`,
+  ].join('; ')
+
+  const r = await sh(sandbox, script, 120).catch((e: unknown) => ({ exitCode: 1, result: String(e) }))
+  if (!(r.result ?? '').includes('__VERIS_CA_OK__')) {
     throw new SnapshotUnsupportedError(
-      'this sandbox image lacks ca-certificates / update-ca-certificates, so the Veris CA ' +
-      'cannot be trusted and every vendor call would fail TLS — use an image that ships them',
+      `could not assemble a CA bundle at ${VERIS_BUNDLE}, so the gateway's certificates ` +
+      `cannot be trusted (${(r.result ?? '').trim().slice(0, 200)})`,
       { phase: 'ca-install' })
   }
-  await sh(sandbox, CA_INSTALL_CMD, 120)
 }
 
 /**
@@ -100,7 +160,7 @@ export async function probeCanary(
   // raw command failure, so print a marker and inspect the output ourselves.
   const r = await sh(
     sandbox,
-    `curl -sS --cacert ${CA_CERT_PATH} --max-time 20 https://${canaryHost}/ || echo __VERIS_CANARY_FAIL__`,
+    `curl -sS --cacert ${VERIS_BUNDLE} --max-time 20 https://${canaryHost}/ || echo __VERIS_CANARY_FAIL__`,
     45,
   ).catch((e: unknown) => ({ exitCode: 1, result: String(e) }))
 

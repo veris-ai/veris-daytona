@@ -40,6 +40,10 @@ export interface EgressCredential {
    *  the CONNECT listener — which is a hard error here, since Daytona has no
    *  other way to reach the gateway. */
   connect_address?: string
+  /** The CONNECT endpoint as a complete proxy URL, credentials included.
+   *  Preferred over building one from connect_address: the gateway owns its own
+   *  auth format, and guessing it is how you end up sending the wrong password. */
+  http_proxy_url?: string
   username: string
   password: string
   ca_pem: string

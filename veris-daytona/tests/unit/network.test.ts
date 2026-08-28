@@ -143,38 +143,53 @@ describe('gatewayProxyUrl', () => {
     // Verified live: `Unsupported outbound proxy scheme "socks5h". Must be http
     // or https` — which is the entire reason the gateway needed a CONNECT
     // listener rather than us pointing Daytona at the SOCKS one.
-    expect(gatewayProxyUrl('gw.api.veris.ai:8080', 'v1.abc')).toMatch(/^http:\/\//)
+    expect(gatewayProxyUrl({ connect_address: 'gw.api.veris.ai:8080', username: 'v1.abc' })).toMatch(/^http:\/\//)
   })
 
   it('carries the sandbox id as the username, which is the demux key', () => {
-    expect(gatewayProxyUrl('gw.api.veris.ai:8080', 'v1.abc'))
+    expect(gatewayProxyUrl({ connect_address: 'gw.api.veris.ai:8080', username: 'v1.abc' }))
       .toBe('http://v1.abc:x@gw.api.veris.ai:8080')
   })
 
   it('percent-encodes userinfo rather than trusting it to be URL-safe', () => {
-    expect(gatewayProxyUrl('gw:8080', 'v1/a b')).toContain('v1%2Fa%20b')
+    expect(gatewayProxyUrl({ connect_address: 'gw:8080', username: 'v1/a b' })).toContain('v1%2Fa%20b')
   })
 
   it('escapes both authority separators, so a username cannot break out', () => {
     // RFC 3986 3.2.1. ':' would split user from password, '@' would end the
     // userinfo and rewrite the host — the two characters that turn a username
     // into an injection.
-    const url = gatewayProxyUrl('gw.api.veris.ai:8080', 'evil:pass@attacker.test')
+    const url = gatewayProxyUrl({ connect_address: 'gw.api.veris.ai:8080', username: 'evil:pass@attacker.test' })
     expect(url).toBe('http://evil%3Apass%40attacker.test:x@gw.api.veris.ai:8080')
     expect(new URL(url).hostname).toBe('gw.api.veris.ai')
   })
 
   it('produces userinfo containing only characters RFC 3986 permits', () => {
-    const url = gatewayProxyUrl('gw:8080', "v1.a-b_c~d!e'f(g)h*i")
+    const url = gatewayProxyUrl({ connect_address: 'gw:8080', username: "v1.a-b_c~d!e'f(g)h*i" })
     const userinfo = url.slice('http://'.length, url.lastIndexOf('@'))
     // unreserved / pct-encoded / sub-delims / ':'
     expect(userinfo).toMatch(/^(?:[A-Za-z0-9\-._~!$&'()*+,;=:]|%[0-9A-Fa-f]{2})*$/)
   })
 
+  it('prefers the gateway`s own URL, which carries the real credentials', () => {
+    // The gateway's password is the twin id, not a placeholder. Building our
+    // own URL from connect_address would authenticate as nobody.
+    const url = 'http://v1.abc:abc@gw.dev.api.veris.ai:8080'
+    expect(gatewayProxyUrl({ http_proxy_url: url, connect_address: 'other:9', username: 'v1.abc' }))
+      .toBe(url)
+  })
+
+  it('validates a supplied URL rather than passing it straight through', () => {
+    for (const bad of ['not a url', 'socks5://gw:1080', 'http://gw', 'ftp://gw:21']) {
+      expect(() => gatewayProxyUrl({ http_proxy_url: bad, username: 'v1.abc' }), bad)
+        .toThrow(/gateway proxy URL|only http or https/)
+    }
+  })
+
   it('refuses a malformed address from the control plane', () => {
     // It would otherwise land in a URL and then in every client's proxy config.
     for (const bad of ['', 'gw.api.veris.ai', 'http://gw:8080', 'gw:notaport', 'gw:8080/path', 'a b:80']) {
-      expect(() => gatewayProxyUrl(bad, 'v1.abc'), bad).toThrow(/malformed gateway address/)
+      expect(() => gatewayProxyUrl({ connect_address: bad, username: 'v1.abc' }), bad).toThrow(/malformed gateway address/)
     }
   })
 })

@@ -27,7 +27,7 @@ import type { VerisApi, VerisContext } from './veris-api'
 import { buildNetwork, dataPlaneEnv } from './network'
 import type { EgressMode } from './network'
 import { CA_CERT_PATH, sanitizeTrustEnv } from './trust'
-import { gatewayProxyUrl, installCa, probeCanary, writeCa } from './gateway'
+import { gatewayProxyUrl, installCa, probeCanary } from './gateway'
 import { MissingCredentialsError, VerisError, VerisGatewayNotOfferedError } from './errors'
 import { SDK_VERSION } from './version'
 
@@ -147,7 +147,7 @@ export class Daytona extends BaseDaytona {
           'for the sandbox to route through',
           { phase: 'credential-mint', verisSandboxId: twin.id })
       }
-      if (!credential.connect_address) {
+      if (!credential.connect_address && !credential.http_proxy_url) {
         throw new VerisGatewayNotOfferedError(
           'the Veris gateway offers SOCKS5 but no HTTP CONNECT endpoint, and Daytona accepts ' +
           'only http/https outbound proxies ("Unsupported outbound proxy scheme"). Upgrade the ' +
@@ -156,10 +156,13 @@ export class Daytona extends BaseDaytona {
       }
 
       const services = twin.services?.length ? twin.services : await controlPlane.services(twin.id)
-      const gatewayHost = credential.connect_address.split(':')[0] ?? ''
+      // Validated here, before it reaches either the allowlist or Daytona.
+      const proxyUrl = gatewayProxyUrl(credential)
       const network = buildNetwork({
         services, mode: egress,
-        gatewayHosts: [gatewayHost, credential.canary_host].filter(Boolean),
+        // The gateway has to be reachable or nothing is: taken from the URL we
+        // are actually going to use, so the two can never disagree.
+        gatewayHosts: [new URL(proxyUrl).hostname, credential.canary_host].filter(Boolean),
         allowOut: v.allowOut, allowRegistries: v.allowRegistries,
       })
 
@@ -189,7 +192,7 @@ export class Daytona extends BaseDaytona {
         // 3. Where Daytona forwards everything the allowlist permits. Chained,
         //    not advisory: an unreachable gateway makes allowed traffic 502
         //    rather than quietly going direct.
-        outboundProxyUrl: gatewayProxyUrl(credential.connect_address, credential.username),
+        outboundProxyUrl: proxyUrl,
         ttlMinutes: rest.ttlMinutes ?? ttlMinutes,
       }
 
@@ -204,8 +207,7 @@ export class Daytona extends BaseDaytona {
     // 4. Trust the gateway's CA, then prove the tunnel is live. Until the canary
     //    answers, nothing about this sandbox is worth believing.
     try {
-      await writeCa(sandbox, credential.ca_pem)
-      if (v.installCa !== false) await installCa(sandbox)
+      await installCa(sandbox, credential.ca_pem)
       await probeCanary(sandbox, credential.canary_host, twin.id)
     } catch (err) {
       await sandbox.delete().catch(() => {})
