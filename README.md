@@ -68,10 +68,17 @@ Both fail closed. There is no configuration in which a missed call quietly
 reaches the real vendor.
 
 `veris-proxy serve --transparent` additionally installs a kernel redirect
-(verified working — Daytona does grant `NET_ADMIN`), and `--strict` makes it
-refuse unmapped hosts with a `421` rather than forwarding them. The tier is
-probed at bring-up, needs no configuration, and a downgrade emits a loud
+(verified working — Daytona does grant `NET_ADMIN`). The tier is probed at
+bring-up, needs no configuration, and a downgrade emits a loud
 `VERIS_PROXY_MODE` warning and shows up in the receipt's `mode`.
+
+We deliberately do **not** pass veris-proxy's `--strict`. It refuses every
+unmapped host, which is the right default for a standalone proxy but redundant
+here — `domainAllowList` already blocks unmapped hosts at the network layer,
+unbypassably. The only unmapped hosts that reach the proxy are the ones we
+deliberately allowed, the package registries, and `--strict` refused those with
+a `421`: `npm install` and `apt-get` broke for every command carrying
+`veris.env()`. Mapped vendor hosts reach the twin either way.
 
 **On `outboundProxyUrl`.** Daytona offers it and we cannot use it: it rejects
 loopback addresses outright (`Outbound proxy host "127.0.0.1" is in a blocked

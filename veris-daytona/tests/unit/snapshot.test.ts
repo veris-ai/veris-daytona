@@ -27,12 +27,15 @@ describe('the snapshot entrypoint', () => {
 })
 
 describe('the veris-proxy command line', () => {
-  it('passes --strict', () => {
-    // Without it, `serve` lets unmapped hosts reach their REAL destination and
-    // the product's claim collapses from "nothing reached the vendor" to "the
-    // hosts we happened to map were intercepted". Nothing else in the system
-    // catches its absence, so it is pinned here.
-    expect(flags).toContain('--strict')
+  it('does NOT pass --strict', () => {
+    // Counter-intuitive, and verified live. --strict makes veris-proxy refuse
+    // every UNMAPPED host. Daytona's domainAllowList already blocks those at
+    // the network layer, so the only unmapped hosts that reach the proxy are
+    // the ones we deliberately allowed — package registries. --strict refused
+    // them with a 421, which broke `npm install` and `apt-get` for every
+    // command carrying veris.env(). Mapped vendor hosts reach the twin either
+    // way; --strict never affected them.
+    expect(flags).not.toContain('--strict')
   })
 
   it('attaches to the twin the host provisioned, and never deploys its own', () => {

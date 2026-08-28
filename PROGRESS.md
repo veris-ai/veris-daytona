@@ -52,6 +52,17 @@ Plus 50 unit tests and a clean typecheck across both packages.
    debugging cycle. The proxy flags now live host-side in `proxyServeFlags()`,
    so the image only rebuilds when the image itself changes.
 
+## A fifth thing the live runs corrected
+
+**`--strict` broke package installs.** It was in from the start, defended as
+load-bearing. Verified live: with `veris.env()` set, `curl registry.npmjs.org`
+returned `421` and `apt-get update` failed — so `npm install` was broken for
+every command the OpenCode plugin runs. Removed. `domainAllowList` already
+blocks unmapped hosts at the network layer, so the guarantee is unchanged: the
+unmapped-host check in the smoke test now fails with `502` (Daytona's allowlist)
+instead of `421` (veris-proxy). Registries return `200` again and the vendor
+call still lands on the twin.
+
 ## Still assumed
 
 - **Neither image is published.** `snapshot/base/` and `snapshot/opencode/` build

@@ -28,7 +28,7 @@ import { buildNetwork, dataPlaneEnv, hostOf } from './network'
 import type { EgressMode } from './network'
 import { CA_CERT_PATH, sanitizeTrustEnv } from './trust'
 import { ensureSnapshot } from './snapshot'
-import { ensureProxy, probeTransparent, teardownProxy, PROXY_URL } from './proxy'
+import { ensureProxy, probeTransparent, teardownProxy } from './proxy'
 import type { ProxyTier } from './receipt'
 import { MissingCredentialsError, VerisError } from './errors'
 import { SDK_VERSION } from './version'
@@ -227,20 +227,6 @@ export class Daytona extends BaseDaytona {
       throw err
     }
 
-    // Interception is carried by `sbx.veris.env()`, which callers pass to their
-    // commands (and the OpenCode plugin passes automatically).
-    //
-    // Deliberately NOT by rewriting Daytona's own network enforcement. An
-    // earlier version added an iptables rule diverting traffic bound for
-    // Daytona's internal proxy to ours, plus a route_localnet flip. That routes
-    // around their control plane from inside the sandbox: undocumented, fragile
-    // against any Daytona change, and not a thing to ship to customers. It also
-    // did not work. The supported fix is on Daytona's side — letting
-    // outboundProxyUrl name an in-sandbox address, the way E2B's
-    // network.egressProxy does — and until then, passing the env is honest and
-    // fails closed.
-    await writeProxyEnv(sandbox)
-
     // The mode label is only knowable now, after the probe.
     await sandbox.setLabels({ ...sandbox.labels, [LABEL.mode]: mode }).catch(() => {})
 
@@ -415,24 +401,6 @@ function resolveCoordinates(v: VerisOpts): ResolvedCoordinates {
     environmentId: v.environmentId ?? process.env.VERIS_ENVIRONMENT_ID,
     apiBase: (v.apiBase ?? process.env.VERIS_API_BASE ?? 'https://svc.api.veris.ai').replace(/\/$/, ''),
   }
-}
-
-/**
- * Cooperative tier only: make HTTP_PROXY visible to every later login shell.
- * Never in the transparent tier, where it breaks the interception it looks
- * like it would reinforce.
- */
-async function writeProxyEnv(sandbox: Sandbox): Promise<void> {
-  const script =
-    `export HTTP_PROXY=${PROXY_URL} HTTPS_PROXY=${PROXY_URL} ` +
-    `http_proxy=${PROXY_URL} https_proxy=${PROXY_URL} ` +
-    `NO_PROXY=localhost,127.0.0.1 no_proxy=localhost,127.0.0.1`
-  await sandbox.process
-    .executeCommand(
-      `sh -lc 'printf %s ${JSON.stringify(script)} > /etc/profile.d/veris-proxy.sh ` +
-      `2>/dev/null || sudo -n sh -c "printf %s ${JSON.stringify(script)} > /etc/profile.d/veris-proxy.sh"'`,
-      undefined, undefined, 30)
-    .catch(() => { /* the allowlist is still the guarantee; this is routing only */ })
 }
 
 function stripVeris(params: CreateParams | undefined): Omit<CreateParams, 'veris'> {

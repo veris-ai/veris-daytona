@@ -14,13 +14,12 @@ import type { ProxyTier } from './receipt'
  * The forward-proxy listener. This is what actually carries vendor traffic to
  * the twin: `sbx.veris.env()` points client stacks at it.
  *
- * Bound on all interfaces rather than loopback, matching veris-proxy's own
- * transparent listeners ([::]:8081, [::]:8443). The port is not exposed outside
- * the sandbox.
+ * Loopback-only. It briefly bound 0.0.0.0 to receive an iptables REDIRECT that
+ * has since been deleted; nothing reaches it from off-host, so the narrower
+ * bind is free.
  */
-export const PROXY_LISTEN = '0.0.0.0:8080'
-/** How a client inside the sandbox addresses it. */
-export const PROXY_URL = 'http://127.0.0.1:8080'
+export const PROXY_LISTEN = '127.0.0.1:8080'
+export const PROXY_URL = `http://${PROXY_LISTEN}`
 
 const sh = (sandbox: Sandbox, cmd: string, timeoutSec = 60) =>
   sandbox.process.executeCommand(`sh -lc ${shellQuote(cmd)}`, undefined, undefined, timeoutSec)
@@ -76,10 +75,16 @@ export function proxyServeFlags(twinId: string, tier: ProxyTier): string {
     'serve',
     // The kernel redirect. Covers runtimes that ignore HTTP_PROXY entirely.
     tier === 'transparent' ? '--transparent' : '',
-    // Not optional: without it, an unmapped host reaches its REAL destination,
-    // and "nothing reached the vendor" degrades to "the hosts we mapped were
-    // intercepted".
-    '--strict',
+    // Deliberately NOT --strict.
+    //
+    // --strict makes veris-proxy refuse every UNMAPPED host. On a standalone
+    // proxy that is the right default. Here it is redundant and harmful:
+    // Daytona's domainAllowList already blocks unmapped hosts at the network
+    // layer, unbypassably, so the only hosts that reach the proxy unmapped are
+    // the ones we deliberately allowed — package registries. --strict refused
+    // those with a 421, which broke `npm install` and `apt-get` for every
+    // command carrying veris.env(). Mapped vendor hosts go to the twin either
+    // way; --strict never affected them.
     // Attach to the twin the HOST provisioned. Never --environment, which would
     // make the in-sandbox proxy the twin's owner and leave the host unable to
     // read a receipt or delete it.
