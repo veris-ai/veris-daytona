@@ -1,0 +1,29 @@
+veris-daytona
+Copyright 2026 Veris AI
+
+This product includes software developed at Veris AI (https://veris.ai).
+
+--------------------------------------------------------------------------------
+
+The OpenCode plugin in `daytona-opencode/` is a fork of @daytona/opencode
+0.192.0, used under the Apache License 2.0.
+
+    Copyright Daytona Platforms Inc.
+    https://github.com/daytona/integrations
+    (packages/opencode-plugin)
+
+Original copyright headers are preserved in the forked files. Veris changes are
+limited to:
+
+  - daytona/core/session-manager.ts   one import, @daytona/sdk -> @veris-ai/daytona
+  - daytona/tools.ts                  registers one additional tool
+  - daytona/tools/veris-receipt.ts    new file (Veris AI)
+  - daytona/tools/bash.ts             passes the Veris interception environment
+  - daytona/plugins/system-transform.ts  appends a Veris section to the prompt
+  - package.json, README              renaming and documentation
+
+--------------------------------------------------------------------------------
+
+Portions of `veris-daytona/src/` (control-plane.ts, trust.ts, version.ts, and
+parts of receipt.ts and veris-api.ts) are shared with @veris-ai/e2b
+(https://github.com/veris-ai/veris-e2b), also Apache-2.0, Copyright Veris AI.
