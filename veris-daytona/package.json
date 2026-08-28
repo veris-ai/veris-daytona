@@ -14,13 +14,17 @@
     }
   },
   "sideEffects": false,
-  "files": ["dist", "README.md"],
-  "engines": { "node": ">=20" },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:live": "vitest run --config vitest.live.config.ts",
     "prepublishOnly": "npm run build",
     "dev": "tsup --watch"
   },
@@ -34,11 +38,24 @@
     "typescript": "^5.6.0",
     "vitest": "^3.2.7"
   },
-  "keywords": ["veris", "daytona", "sandbox", "integration-testing", "agents"],
+  "keywords": [
+    "veris",
+    "daytona",
+    "sandbox",
+    "integration-testing",
+    "agents"
+  ],
   "license": "Apache-2.0",
-  "repository": { "type": "git", "url": "https://github.com/veris-ai/veris-daytona" },
-  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/veris-ai/veris-daytona"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "homepage": "https://github.com/veris-ai/veris-daytona#readme",
-  "bugs": { "url": "https://github.com/veris-ai/veris-daytona/issues" },
+  "bugs": {
+    "url": "https://github.com/veris-ai/veris-daytona/issues"
+  },
   "author": "Veris AI"
 }

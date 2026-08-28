@@ -24,8 +24,8 @@ export const isHttpUrl = (u: string) => /^https?:/.test(u)
  * kernel redirect catches them before they ever reach the network layer; in
  * the cooperative tier a client that ignores HTTP_PROXY dials them for real —
  * and is blocked, because they are absent here. That block is the whole reason
- * the cooperative tier is honest: Veris's own transport.md warns the env-var
- * approach has "silent gaps", and this is what makes the gap loud.
+ * the cooperative tier is honest: an env-var-only approach normally has silent
+ * gaps, and the allowlist is what makes the gap loud instead.
  *
  * Exported because the receipt and the docs both need to name them.
  */
@@ -120,10 +120,8 @@ export function isSafeEnvName(name: string): boolean {
  * Package registries and toolchain hosts, allowed by default.
  *
  * A coding sandbox that cannot `npm install` is not a coding sandbox, and
- * veris-proxy deliberately does not intercept registries ("dependency
- * resolution inside the container works as it always did" — transport.md). So
- * they must be reachable, and the honest thing is to name them here where a
- * reader can audit the list, rather than punch a wildcard.
+ * registries are not vendors under test, so they must stay reachable. Naming
+ * them here keeps the list auditable rather than punching a wildcard.
  *
  * Override wholesale with `veris.allowRegistries: false` plus your own
  * `veris.allowOut`, for a sandbox that should reach nothing but its twin.

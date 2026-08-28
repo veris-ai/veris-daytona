@@ -12,7 +12,7 @@ with a receipt of what the vendor actually received.
 ```sh
 export DAYTONA_API_KEY=…       # https://app.daytona.io/dashboard/keys
 export VERIS_API_KEY=…         # https://app.veris.ai
-export VERIS_ENVIRONMENT_ID=…  # or let it read .veris/setup.json, which /veris-sim:setup writes
+export VERIS_ENVIRONMENT_ID=…  # which vendor services your twin gets
 ```
 
 Then `opencode`. No image to build, no snapshot to register, no network config,
@@ -85,11 +85,6 @@ loopback addresses outright (`Outbound proxy host "127.0.0.1" is in a blocked
 address range`), and per the SDK's own docs it is "convenience routing, not a
 security boundary on its own" regardless. The allowlist is the boundary.
 
-**One honest note for Veris users.** `veris-sim`'s `transport.md` says of the
-env-var tier that "its gaps are silent, so it is never used for code under
-test." That warning is right in general and is answered here by the allowlist:
-on Daytona the gaps are 403s and DNS failures, not silent successes.
-
 ## Layout
 
 | directory | ships as | what it is |
@@ -103,8 +98,7 @@ Both packages sit under the `@veris-ai` scope, which already says "Veris" — so
 neither name repeats it. `@veris-ai/daytona` is the engine integration (mirroring
 `@veris-ai/e2b`); `@veris-ai/daytona-opencode` is the OpenCode plugin built on
 it. A future E2B-backed plugin would be `@veris-ai/e2b-opencode`, and the pattern
-holds. Note this diverges from the older unscoped `opencode-veris-sim`, which is
-worth reconciling next time that package ships.
+holds.
 
 ### The SDK is generic; OpenCode is one consumer
 
@@ -192,9 +186,28 @@ The live suite is the one that proves the product: it asserts interception is up
 rehydrates the Veris surface in a fresh process (the resumed-session path), and
 that deleting the sandbox leaves no twin behind.
 
-## Status
+## Status and known limitations
 
-Built and verified: the SDK shim, the plugin fork, the snapshot image
-definitions, 48 unit tests, and a live suite. Not yet run end-to-end against a
-real Daytona account — see `PROGRESS.md` for exactly what is proven and what is
-still assumed.
+Verified end to end against a live Daytona organization and a live Veris twin:
+sandbox and twin up in ~15s, interception live before the first command, an
+unmapped host refused, a vendor call answered by the twin, and the receipt
+recording it. `npm run smoke` reproduces the whole path.
+
+Known limitations, in the order you are likely to hit them:
+
+- **The sandbox images are not published yet.** Until
+  `ghcr.io/veris-ai/veris-sandbox` and `ghcr.io/veris-ai/veris-opencode` are on
+  the registry, pass your own build:
+  `veris: { snapshotImage: Image.fromDockerfile('snapshot/base/Dockerfile') }`,
+  as `scripts/smoke.ts` does.
+- **The OpenCode plugin has not been driven end to end.** It typechecks against
+  the SDK and its `bash` tool passes the interception environment, but no
+  `opencode` session has been run against it.
+- **The cooperative fallback has not been exercised.** Every run so far received
+  `NET_ADMIN`, so the transparent path is the only one with live coverage.
+- **Commands must carry `veris.env()`.** Anything launched without it fails
+  closed — a 403 from Daytona's proxy, or a hostname that will not resolve —
+  rather than reaching the real vendor. The plugin does this automatically;
+  direct SDK callers must pass it.
+- **QUIC/HTTP3 and ECH are not intercepted.** They are reported in the receipt's
+  `leaks` rather than silently omitted.
