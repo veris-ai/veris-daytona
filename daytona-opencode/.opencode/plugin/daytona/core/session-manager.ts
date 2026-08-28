@@ -122,6 +122,25 @@ export class DaytonaSessionManager {
       })
       throw new Error('DAYTONA_API_KEY is not set. Please set the environment variable to use Daytona sandboxes.')
     }
+    // Veris coordinates get the same treatment as the Daytona key, and for the
+    // same reason: this is the first tool call of a session, and a legible
+    // message here is the difference between "set one env var" and a stack
+    // trace out of sandbox creation.
+    //
+    // Deliberately fatal rather than degrading to a plain Daytona sandbox. A
+    // sandbox without a twin reaches the REAL vendor, and an agent cannot tell
+    // the difference — so an unset key has to stop the session, not quietly
+    // change what it is doing.
+    for (const [name, hint] of [
+      ['VERIS_API_KEY', 'Get one at https://app.veris.ai'],
+      ['VERIS_ENVIRONMENT_ID', 'A Veris environment decides which vendor services your twin gets'],
+    ] as const) {
+      if (process.env[name]) continue
+      const message = `${name} is not set, so this sandbox would reach real vendor APIs. ${hint}.`
+      logger.error(message)
+      toast.show({ title: 'Veris not configured', message, variant: 'error' })
+      throw new Error(message)
+    }
 
     // Load project sessions if needed
     this.setProjectContext(projectId)

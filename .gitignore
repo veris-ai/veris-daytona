@@ -5,3 +5,9 @@ dist/
 .DS_Store
 .env
 .env.*
+
+# Plugin build output. tsc emits alongside the sources because OpenCode loads
+# the plugin from .opencode/plugin/; package.json `files` still ships it.
+daytona-opencode/.opencode/plugin/**/*.js
+daytona-opencode/.opencode/plugin/**/*.js.map
+daytona-opencode/.opencode/plugin/**/*.d.ts
