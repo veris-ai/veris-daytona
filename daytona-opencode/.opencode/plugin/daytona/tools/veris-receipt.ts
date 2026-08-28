@@ -39,7 +39,11 @@ export const verisReceiptTool = (
   async execute(args: { service?: string }, ctx: ToolContext) {
     const sandbox = await sessionManager.getSandbox(ctx.sessionID, projectId, worktree, pluginCtx)
 
+    // Without this OpenCode renders the call as "verisReceipt Unknown".
+    const title = (t: string) => ctx.metadata({ title: t })
+
     if (!isVerisSandbox(sandbox)) {
+      title('no twin attached')
       return (
         'No Veris twin is attached to this sandbox, so there is no receipt to read.\n' +
         'Set VERIS_API_KEY and VERIS_ENVIRONMENT_ID and start a new session to get one.'
@@ -48,6 +52,7 @@ export const verisReceiptTool = (
 
     if (args.service) {
       const entry = await sandbox.veris.receipt(args.service)
+      title(`${args.service}: ${entry.requests} request(s)`)
       if (entry.requests === 0) {
         return (
           `Receipt for '${args.service}': ZERO requests.\n\n` +
@@ -67,6 +72,7 @@ export const verisReceiptTool = (
     const receipt = await sandbox.veris.receipt()
     const names = Object.keys(receipt.services)
     const total = names.reduce((n, k) => n + (receipt.services[k]?.requests ?? 0), 0)
+    title(`${total} request(s) across ${names.length} service(s)`)
 
     const header =
       `Veris receipt — twin ${sandbox.verisSandboxId}\n` +

@@ -151,10 +151,18 @@ the gateway grew an HTTP CONNECT listener.
 
 ## Status and known limitations
 
-Verified end to end against a live Daytona organization and a live Veris twin:
-sandbox and twin up, the canary answering before the first command, an unmapped
-host refused, a vendor call answered by the twin, and the receipt recording it.
-`npm run smoke` reproduces the whole path.
+Verified end to end against a live Daytona organization and a live Veris twin,
+through both entry points.
+
+The SDK path, which `npm run smoke` reproduces: sandbox and twin up, the canary
+answering before the first command, an unmapped host refused, a vendor call
+answered by the twin, and the receipt recording it.
+
+The plugin path, driven through a real `opencode` session: the agent ran in a
+Daytona sandbox, called `https://api.stripe.com/v1/charges`, and `verisReceipt`
+reported `GET /v1/charges -> 401` against `interception: gateway,
+integrity: verified`. Told to claim success *without* making the call, the same
+tool reported `ZERO requests` — which is the entire point of it.
 
 - **Requires a control plane that serves an HTTP CONNECT gateway.** Without one,
   `create()` fails at `credential-mint` naming exactly that.
@@ -162,9 +170,10 @@ host refused, a vendor call answered by the twin, and the receipt recording it.
   client's certificate chain terminates at Daytona's CA, not ours. If Daytona
   ever tunnels `CONNECT` end-to-end instead, the Veris CA becomes load-bearing —
   it is already installed for that reason, but that path is untested.
-- **The OpenCode plugin has not been driven end to end.** The SDK path is
-  verified by `npm run smoke`; no `opencode` session has been run against the
-  plugin itself.
+- **Git sync into the sandbox fails with `Host key verification failed`.**
+  Inherited from upstream `@daytona/opencode`, not introduced by this fork —
+  the agent works, but local changes are not pushed into the sandbox. Likely
+  wants `DAYTONA_SSH_KNOWN_HOSTS`.
 - **QUIC/HTTP3 and ECH are not intercepted.** The gateway relays TCP; both are
   reported in the receipt's `leaks` rather than silently omitted.
 
