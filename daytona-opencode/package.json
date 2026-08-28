@@ -4,7 +4,10 @@
   "description": "Run every OpenCode session in a Daytona sandbox whose vendor API calls are answered by a Veris twin. One line in opencode.json: unmodified code, real hostnames, and a receipt of what the vendor actually received.",
   "main": "./.opencode/plugin/index.js",
   "types": "./.opencode/plugin/index.d.ts",
-  "files": [".opencode", "README.md"],
+  "files": [
+    ".opencode",
+    "README.md"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/veris-ai/plugins.git",
@@ -12,7 +15,9 @@
   },
   "author": "Veris (https://veris.ai)",
   "license": "Apache-2.0",
-  "bugs": { "url": "https://github.com/veris-ai/plugins/issues" },
+  "bugs": {
+    "url": "https://github.com/veris-ai/plugins/issues"
+  },
   "homepage": "https://github.com/veris-ai/plugins/tree/main/daytona-opencode#readme",
   "keywords": [
     "opencode",
@@ -22,7 +27,9 @@
     "sandbox",
     "integration-testing"
   ],
-  "engines": { "opencode": ">=1.16 <2" },
+  "engines": {
+    "opencode": ">=1.16 <2"
+  },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -38,5 +45,8 @@
   "devDependencies": {
     "@types/node": "^22",
     "typescript": "^5.6.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -10,11 +10,13 @@
 // install the gateway's CA so the forged vendor leaves validate, and prove the
 // tunnel is actually live before anyone trusts a receipt.
 import type { Sandbox } from '@daytona/sdk'
-import { ReceiptIntegrityError, SnapshotUnsupportedError } from './errors'
+import { ReceiptIntegrityError, SnapshotUnsupportedError, VerisError } from './errors'
 import { CA_CERT_PATH, CA_INSTALL_CMD, CA_TOOLING_PROBE } from './trust'
 
 /** A canary hostname must look like a hostname before it goes in a shell command. */
 const HOSTNAME_RE = /^[A-Za-z0-9.-]+$/
+/** host:port, the only shape an outbound proxy address may take. */
+const HOSTPORT_RE = /^[A-Za-z0-9.-]+:\d{1,5}$/
 
 /** Single-quote a string for POSIX sh. */
 export function shellQuote(s: string): string {
@@ -30,9 +32,26 @@ const sh = (sandbox: Sandbox, cmd: string, timeoutSec = 60) =>
  * The username is the tenant demux key — the gateway reads the sandbox id out
  * of it. There is no separate secret: the id IS the capability, exactly as the
  * SOCKS path treats it, so the password is a placeholder the gateway ignores.
- * Both halves are percent-encoded because they land in a URL's userinfo.
+ *
+ * RFC 3986 §3.2.1 notes that `user:password` in userinfo is deprecated. It is
+ * also the only form HTTP proxy clients accept for RFC 7617 Basic credentials,
+ * and it is what Daytona forwards, so it is what we emit.
+ *
+ * `encodeURIComponent` is exactly right for userinfo: everything it leaves raw
+ * is unreserved or a sub-delim, and it escapes both separators — `:` to %3A and
+ * `@` to %40 — so a username can never break out into the authority.
+ *
+ * The address is validated rather than interpolated: it arrives from the
+ * control plane, and an unchecked value here would land in a URL and then in
+ * every client's proxy configuration.
  */
 export function gatewayProxyUrl(connectAddress: string, username: string): string {
+  if (!HOSTPORT_RE.test(connectAddress)) {
+    throw new VerisError(
+      `the control plane returned a malformed gateway address: ${JSON.stringify(connectAddress)} ` +
+      `(expected host:port)`,
+      { phase: 'credential-mint' })
+  }
   return `http://${encodeURIComponent(username)}:x@${connectAddress}`
 }
 

@@ -154,4 +154,27 @@ describe('gatewayProxyUrl', () => {
   it('percent-encodes userinfo rather than trusting it to be URL-safe', () => {
     expect(gatewayProxyUrl('gw:8080', 'v1/a b')).toContain('v1%2Fa%20b')
   })
+
+  it('escapes both authority separators, so a username cannot break out', () => {
+    // RFC 3986 3.2.1. ':' would split user from password, '@' would end the
+    // userinfo and rewrite the host — the two characters that turn a username
+    // into an injection.
+    const url = gatewayProxyUrl('gw.api.veris.ai:8080', 'evil:pass@attacker.test')
+    expect(url).toBe('http://evil%3Apass%40attacker.test:x@gw.api.veris.ai:8080')
+    expect(new URL(url).hostname).toBe('gw.api.veris.ai')
+  })
+
+  it('produces userinfo containing only characters RFC 3986 permits', () => {
+    const url = gatewayProxyUrl('gw:8080', "v1.a-b_c~d!e'f(g)h*i")
+    const userinfo = url.slice('http://'.length, url.lastIndexOf('@'))
+    // unreserved / pct-encoded / sub-delims / ':'
+    expect(userinfo).toMatch(/^(?:[A-Za-z0-9\-._~!$&'()*+,;=:]|%[0-9A-Fa-f]{2})*$/)
+  })
+
+  it('refuses a malformed address from the control plane', () => {
+    // It would otherwise land in a URL and then in every client's proxy config.
+    for (const bad of ['', 'gw.api.veris.ai', 'http://gw:8080', 'gw:notaport', 'gw:8080/path', 'a b:80']) {
+      expect(() => gatewayProxyUrl(bad, 'v1.abc'), bad).toThrow(/malformed gateway address/)
+    }
+  })
 })

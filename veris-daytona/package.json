@@ -48,12 +48,13 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/veris-ai/veris-daytona"
+    "url": "git+https://github.com/veris-ai/veris-daytona.git",
+    "directory": "veris-daytona"
   },
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/veris-ai/veris-daytona#readme",
+  "homepage": "https://github.com/veris-ai/veris-daytona/tree/main/veris-daytona#readme",
   "bugs": {
     "url": "https://github.com/veris-ai/veris-daytona/issues"
   },
