@@ -33,7 +33,13 @@ export interface TwinSandbox {
 
 /** Response of POST /v1/sandboxes/{sid}/egress-credential (gateway mode). */
 export interface EgressCredential {
+  /** SOCKS5 endpoint. What @veris-ai/e2b uses; Daytona cannot (it accepts only
+   *  http/https outbound proxies). */
   socks_address: string
+  /** HTTP CONNECT endpoint, host:port. Absent on a control plane that predates
+   *  the CONNECT listener — which is a hard error here, since Daytona has no
+   *  other way to reach the gateway. */
+  connect_address?: string
   username: string
   password: string
   ca_pem: string

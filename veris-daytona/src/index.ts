@@ -1,10 +1,9 @@
 // @veris-ai/daytona — Veris twin interception for Daytona sandboxes.
 //
 // This is the ENGINE integration, and it is deliberately generic: it knows
-// nothing about what you run in the sandbox. Its default snapshot carries
-// veris-proxy and a CA and no toolchain. Running an agent in there is one use
-// of it (see @veris-ai/daytona-opencode) rather than what it is for — the same
-// relationship @veris-ai/e2b has to E2B.
+// nothing about what you run in the sandbox, and needs no particular image.
+// Running an agent in there is one use of it (see @veris-ai/daytona-opencode)
+// rather than what it is for — the same relationship @veris-ai/e2b has to E2B.
 //
 // A drop-in for @daytona/sdk. The only difference is that `Daytona` is ours,
 // so every sandbox it creates comes up with a Veris twin already answering its
@@ -34,21 +33,13 @@ export type { VerisOpts, VerisDaytonaConfig, VerisSandbox } from './daytona'
 export { isVerisSandbox } from './daytona'
 
 export type { VerisApi, TouchMatcher, DeliverToOpts, VerisContext } from './veris-api'
-export type { Receipt, ReceiptEntry, ReceiptRequest, ReceiptLeak, ProxyTier } from './receipt'
+export type { Receipt, ReceiptEntry, ReceiptRequest, ReceiptLeak } from './receipt'
 export type { EgressMode, NetworkParams } from './network'
 export { DEFAULT_REGISTRY_HOSTS, vendorHosts, twinHosts, dataPlaneHosts } from './network'
 export type { ServiceInfo as VerisServiceInfo, RouteEntry, TwinSandbox } from './control-plane'
 export { ControlPlane } from './control-plane'
-export {
-  SNAPSHOT_IMAGE,
-  SNAPSHOT_IMAGE_VERSION,
-  SNAPSHOT_NAME,
-  SNAPSHOT_ENTRYPOINT,
-  SNAPSHOT_IMAGE_ENV,
-  SNAPSHOT_NAME_ENV,
-  ensureSnapshot,
-} from './snapshot'
 export { CA_CERT_PATH, SYSTEM_BUNDLE, vendoredTrustEnv } from './trust'
+export { gatewayProxyUrl } from './gateway'
 export {
   VerisError,
   MissingCredentialsError,
@@ -58,7 +49,6 @@ export {
   VerisUntouchedError,
   TwinExpiredError,
   SnapshotUnsupportedError,
-  ProxyStartError,
   UnsupportedOperationError,
 } from './errors'
 export type { VerisErrorPhase } from './errors'

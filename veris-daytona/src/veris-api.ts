@@ -3,12 +3,13 @@
 // future @daytona/sdk minor can never collide with a generic method name.
 import type { Sandbox } from '@daytona/sdk'
 import type { ControlPlane, ServiceInfo } from './control-plane'
-import { fetchReceiptEntry, probeIntegrity } from './receipt'
-import type { Receipt, ReceiptEntry, ReceiptLeak, ProxyTier } from './receipt'
+import { fetchReceiptEntry } from './receipt'
+import type { Receipt, ReceiptEntry, ReceiptLeak } from './receipt'
 import { VerisUntouchedError, VerisError } from './errors'
 import { dataPlaneEnv, isHttpUrl } from './network'
 import type { EgressMode } from './network'
-import { readProxyEnv } from './proxy'
+import { probeCanary } from './gateway'
+import { vendoredTrustEnv } from './trust'
 
 /** Everything needed to answer Veris queries about a live sandbox. */
 export interface VerisContext {
@@ -16,8 +17,9 @@ export interface VerisContext {
   controlPlane: ControlPlane
   environmentId: string
   twinId: string
-  mode: ProxyTier
   egress: EgressMode
+  /** The reserved host the canary probe dials to prove the tunnel is live. */
+  canaryHost: string
   /** Whether this twin is owned (delete removes it) or attached (caller owns it). */
   ownsTwin: boolean
 }
@@ -34,14 +36,13 @@ export interface TouchMatcher {
 export interface VerisApi {
   /** The Veris twin's sandbox id — NOT the Daytona sandbox id. */
   readonly sandboxId: string
-  readonly mode: ProxyTier
+  readonly mode: 'gateway'
   services(): Promise<ServiceInfo[]>
   receipt(): Promise<Receipt>
   receipt(service: string): Promise<ReceiptEntry>
   assertTouched(service: string, match?: TouchMatcher): Promise<void>
   getDataPlaneEnv(): Promise<Record<string, string>>
-  getTrustEnv(): Promise<Record<string, string>>
-  env(): Promise<Record<string, string>>
+  getTrustEnv(): Record<string, string>
   deliverTo(port: number, opts?: DeliverToOpts): Promise<string>
   deliverTo(url: string | null, opts?: DeliverToOpts): Promise<string | null>
 }
@@ -56,7 +57,7 @@ export class VerisApiImpl implements VerisApi {
   constructor(private readonly ctx: VerisContext) {}
 
   get sandboxId(): string { return this.ctx.twinId }
-  get mode(): ProxyTier { return this.ctx.mode }
+  get mode(): 'gateway' { return 'gateway' }
 
   services(): Promise<ServiceInfo[]> {
     return this.ctx.controlPlane.services(this.ctx.twinId)
@@ -65,10 +66,10 @@ export class VerisApiImpl implements VerisApi {
   receipt(): Promise<Receipt>
   receipt(service: string): Promise<ReceiptEntry>
   async receipt(service?: string): Promise<Receipt | ReceiptEntry> {
-    // Prove the live proxy is still THIS run's before trusting any count. A
-    // receipt read through a proxy that was restarted against a different twin
-    // would be a confident lie, which is worse than no receipt at all.
-    await probeIntegrity(this.ctx.sandbox, this.ctx.twinId)
+    // Prove egress is STILL tunnelled before trusting any count. A receipt read
+    // from a sandbox whose egress was detached would be a confident lie, which
+    // is worse than no receipt at all.
+    await probeCanary(this.ctx.sandbox, this.ctx.canaryHost, this.ctx.twinId)
 
     const services = await this.services()
     if (service !== undefined) {
@@ -84,26 +85,18 @@ export class VerisApiImpl implements VerisApi {
       services.filter((s) => isHttpUrl(s.control_url)).map(async (svc) => [svc.name, await fetchReceiptEntry(svc)] as const))
     return {
       services: Object.fromEntries(entries),
-      mode: this.ctx.mode,
+      mode: 'gateway',
       integrity: 'verified',
       leaks: this.leaks(),
     }
   }
 
   /**
-   * What this receipt cannot see.
-   *
-   * The transparent tier redirects tcp/80+443, so QUIC/HTTP3 and ECH ride
-   * around it. The cooperative tier additionally misses any client that
-   * ignores HTTP_PROXY — but that client is BLOCKED by the domain allowlist
-   * rather than reaching the real vendor, so it is a failed request, never a
-   * silent one. Both are named rather than rounded off.
+   * What this receipt cannot see. The gateway relays TCP, so QUIC/HTTP3 and ECH
+   * ride around it — named rather than rounded off.
    */
   private leaks(): ReceiptLeak[] {
-    const l: ReceiptLeak[] = ['udp-quic-possible', 'ech-possible']
-    if (this.ctx.egress === 'open') return l
-    if (this.ctx.mode === 'cooperative') l.push('non-cooperating-client-blocked')
-    return l
+    return ['udp-quic-possible', 'ech-possible']
   }
 
   async assertTouched(service: string, match?: TouchMatcher): Promise<void> {
@@ -131,34 +124,9 @@ export class VerisApiImpl implements VerisApi {
     return dataPlaneEnv(await this.services())
   }
 
-  /** The CA/trust vars the proxy wrote for this run, read from the sandbox. */
-  async getTrustEnv(): Promise<Record<string, string>> {
-    return readProxyEnv(this.ctx.sandbox)
-  }
-
-  /**
-   * The interception environment: pass this to every command whose traffic
-   * should reach the twin.
-   *
-   *   await sbx.process.executeCommand('pytest', undefined, await sbx.veris.env())
-   *
-   * It is needed, and the reason is Daytona-specific. Daytona injects its own
-   * HTTP(S)_PROXY into every sandbox, pointing at its internal "netleash" MITM,
-   * and that value beats create-time envVars, image ENV, and /etc/profile.d
-   * (which `executeCommand` does not read at all). Left alone, netleash sees a
-   * vendor host that is not on the domainAllowList and answers 403 — so the
-   * call fails rather than reaching the twin.
-   *
-   * These values come from veris-proxy's own `--write-env` output, so they are
-   * whatever the proxy says they should be rather than anything we guess: the
-   * forward-proxy address plus the CA paths for every client stack.
-   *
-   * Omitting it is not a silent leak. A command that keeps Daytona's proxy gets
-   * a loud 403, and one that bypasses proxies entirely cannot resolve the
-   * vendor hostname — the allowlist gates DNS. Both fail closed.
-   */
-  async env(): Promise<Record<string, string>> {
-    return { ...(await readProxyEnv(this.ctx.sandbox)), ...(await this.getDataPlaneEnv()) }
+  /** The CA trust vars injected at create, for callers building their own env. */
+  getTrustEnv(): Record<string, string> {
+    return vendoredTrustEnv()
   }
 
   /**

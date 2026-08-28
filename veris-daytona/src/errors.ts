@@ -1,20 +1,15 @@
 /**
  * Every failure phase a Veris error can name. Bring-up spans four systems
- * (control plane, Daytona API, the sandbox, the in-sandbox proxy), so errors
+ * (control plane, Daytona API, the sandbox, the Veris gateway), so errors
  * carry a structured phase rather than a wall of logs.
  */
 export type VerisErrorPhase =
   | 'credentials'
-  | 'snapshot-ensure'
   | 'twin-provision'
-  // Gateway-tier phases. Unused today — the gateway tier is deferred — but
-  // control-plane.ts is kept byte-identical to veris-e2b's so the two stay in
-  // sync, and it names them.
   | 'gateway-preflight'
   | 'credential-mint'
   | 'sandbox-create'
   | 'ca-install'
-  | 'proxy-start'
   | 'canary'
   | 'receipt'
   | 'attach'
@@ -74,11 +69,9 @@ export class VerisUntouchedError extends VerisError {
 /** The Daytona sandbox is alive but its Veris twin is gone (TTL expiry, delete, reset). */
 export class TwinExpiredError extends VerisError {}
 
-/** The snapshot cannot host the Veris layer (no veris-proxy, no ca-certificates, …). */
+/** The sandbox image cannot host the Veris layer — in practice, no
+ *  ca-certificates, so the gateway CA cannot be trusted. */
 export class SnapshotUnsupportedError extends VerisError {}
-
-/** veris-proxy never came up inside the sandbox, so nothing is intercepted. */
-export class ProxyStartError extends VerisError {}
 
 /** An inherited Daytona operation that would break the one-sandbox-one-twin invariant (e.g. fork). */
 export class UnsupportedOperationError extends VerisError {}

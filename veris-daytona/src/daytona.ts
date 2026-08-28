@@ -24,13 +24,11 @@ import { ControlPlane } from './control-plane'
 import type { TwinSandbox } from './control-plane'
 import { VerisApiImpl } from './veris-api'
 import type { VerisApi, VerisContext } from './veris-api'
-import { buildNetwork, dataPlaneEnv, hostOf } from './network'
+import { buildNetwork, dataPlaneEnv } from './network'
 import type { EgressMode } from './network'
 import { CA_CERT_PATH, sanitizeTrustEnv } from './trust'
-import { ensureSnapshot } from './snapshot'
-import { ensureProxy, probeTransparent, teardownProxy } from './proxy'
-import type { ProxyTier } from './receipt'
-import { MissingCredentialsError, VerisError } from './errors'
+import { gatewayProxyUrl, installCa, probeCanary, writeCa } from './gateway'
+import { MissingCredentialsError, VerisError, VerisGatewayNotOfferedError } from './errors'
 import { SDK_VERSION } from './version'
 
 export interface VerisOpts {
@@ -53,15 +51,11 @@ export interface VerisOpts {
   /** Allow package registries (npm, PyPI, apt, …). Default true: a coding
    *  sandbox that cannot install dependencies is not usable. */
   allowRegistries?: boolean
-  /** Force a tier instead of probing. 'auto' (default) prefers transparent. */
-  tier?: ProxyTier | 'auto'
-  /** Snapshot name to ensure/use. Defaults to the pinned Veris snapshot. */
-  snapshot?: string
-  /** What the snapshot is registered from: a registry reference, or an `Image`
-   *  Daytona builds server-side (`Image.fromDockerfile(...)` needs no registry). */
-  snapshotImage?: string | Image
-  /** Progress callback for the one-time snapshot registration. */
-  onSnapshotLogs?: (chunk: string) => void
+  /** Install the gateway CA into the sandbox trust store. Default true; without
+   *  it every HTTPS call to a vendor host fails certificate validation. */
+  installCa?: boolean
+  /** Inject { [env_hint]: dsn } for non-HTTP twin services. Default true. */
+  dataPlaneEnv?: boolean
   /** Turn Veris off entirely for this create — a plain Daytona sandbox. */
   disabled?: boolean
 }
@@ -80,6 +74,7 @@ const LABEL = {
   mode: 'veris_mode',
   egress: 'veris_egress',
   ownsTwin: 'veris_owns_twin',
+  canaryHost: 'veris_canary_host',
 } as const
 
 const VERIS_LABEL_KEYS: readonly string[] = Object.values(LABEL)
@@ -95,14 +90,6 @@ export type VerisSandbox = Sandbox & {
 /** Is this sandbox one of ours? Narrows for callers who hold a bare Sandbox. */
 export function isVerisSandbox(sbx: Sandbox): sbx is VerisSandbox {
   return typeof (sbx as VerisSandbox).verisSandboxId === 'string'
-}
-
-function warnCooperative(reason: string): void {
-  process.emitWarning(
-    `@veris-ai/daytona: the transparent tier is unavailable (${reason}), so this sandbox ` +
-    `intercepts via HTTP_PROXY. Clients that honour it are intercepted; clients that do not ` +
-    `are BLOCKED by the domain allowlist, never silently sent to the real vendor.`,
-    { code: 'VERIS_PROXY_MODE' })
 }
 
 export class Daytona extends BaseDaytona {
@@ -140,32 +127,39 @@ export class Daytona extends BaseDaytona {
     const ttlMinutes = v.ttlMinutes ?? 60
     const ownsTwin = !v.attachSandboxId
 
-    // 1. The snapshot must exist in THIS organization. First run in an org pays
-    //    a one-time registration from the public image; later runs find it.
-    //    Skipped when the caller brought their own image or snapshot.
-    let snapshot: string | undefined
-    const callerBroughtImage = 'image' in rest && rest.image !== undefined
-    const callerSnapshot = (rest as CreateSandboxFromSnapshotParams).snapshot
-    if (!callerBroughtImage) {
-      snapshot = callerSnapshot ?? await ensureSnapshot(this, {
-        name: v.snapshot, image: v.snapshotImage, onLogs: v.onSnapshotLogs,
-      })
-    }
-
-    // 2. Provision the twin BEFORE the sandbox: the network allowlist needs its
-    //    hostnames, and the sandbox env needs its id. An in-sandbox proxy that
-    //    provisioned its own twin (serve --environment) would never tell us the
-    //    id, leaving receipt() with nothing to read and teardown nothing to delete.
+    // 1. Provision the twin first: the allowlist needs the vendor hostnames it
+    //    answers for, and the egress credential is minted against it.
     const twin = await this.provisionTwin(controlPlane, v, coords, ttlMinutes)
     const cleanupTwin = async () => {
       if (ownsTwin) await controlPlane.deleteTwin(twin.environment_id, twin.id).catch(() => {})
     }
 
     let sandbox: Sandbox
+    let credential
     try {
+      // 2. Mint the egress credential. Daytona accepts only http/https outbound
+      //    proxies, so a control plane that offers SOCKS alone cannot be used
+      //    here at all — say so plainly rather than failing later in TLS.
+      credential = await controlPlane.mintEgressCredential(twin.environment_id, twin.id)
+      if (!credential) {
+        throw new VerisGatewayNotOfferedError(
+          'this Veris control plane does not offer egress credentials, so there is no gateway ' +
+          'for the sandbox to route through',
+          { phase: 'credential-mint', verisSandboxId: twin.id })
+      }
+      if (!credential.connect_address) {
+        throw new VerisGatewayNotOfferedError(
+          'the Veris gateway offers SOCKS5 but no HTTP CONNECT endpoint, and Daytona accepts ' +
+          'only http/https outbound proxies ("Unsupported outbound proxy scheme"). Upgrade the ' +
+          'control plane to one that returns connect_address.',
+          { phase: 'credential-mint', verisSandboxId: twin.id })
+      }
+
       const services = twin.services?.length ? twin.services : await controlPlane.services(twin.id)
+      const gatewayHost = credential.connect_address.split(':')[0] ?? ''
       const network = buildNetwork({
-        services, mode: egress, apiBaseHost: hostOf(coords.apiBase),
+        services, mode: egress,
+        gatewayHosts: [gatewayHost, credential.canary_host].filter(Boolean),
         allowOut: v.allowOut, allowRegistries: v.allowRegistries,
       })
 
@@ -173,28 +167,13 @@ export class Daytona extends BaseDaytona {
       // data-plane env_hint (e.g. DATABASE_URL) would silently point the code
       // under test at production.
       const verisManaged: Record<string, string> = {
-        ...sanitizeTrustEnv(undefined),
-        ...dataPlaneEnv(services),
+        ...(v.installCa !== false ? sanitizeTrustEnv(undefined) : {}),
+        ...(v.dataPlaneEnv !== false ? dataPlaneEnv(services) : {}),
         VERIS_SANDBOX_ID: twin.id,
-        VERIS_API_KEY: coords.apiKey,
-        VERIS_API_BASE: coords.apiBase,
-        // NOTE no HTTP_PROXY here, deliberately.
-        //
-        // An earlier version set it unconditionally as "belt and braces". It is
-        // the opposite: in the transparent tier the kernel redirect already has
-        // the traffic, and an HTTP_PROXY on top makes curl issue an explicit
-        // CONNECT to the forward listener, which answers 403 — a working
-        // interception broken by a redundant variable. veris-proxy names this
-        // case itself with `--env-trust-only`: "emit only the CA variables, for
-        // a tier where the kernel already does the routing".
-        //
-        // The cooperative tier does need them, and only there are they written
-        // — into /etc/profile.d, after the probe has told us which tier we got.
       }
 
       const createParams = {
         ...rest,
-        ...(snapshot ? { snapshot } : {}),
         envVars: { ...(rest.envVars ?? {}), ...verisManaged },
         labels: {
           ...reserveLabels(rest.labels),
@@ -203,8 +182,14 @@ export class Daytona extends BaseDaytona {
           [LABEL.apiBase]: coords.apiBase,
           [LABEL.egress]: egress,
           [LABEL.ownsTwin]: String(ownsTwin),
+          [LABEL.mode]: 'gateway',
+          [LABEL.canaryHost]: credential.canary_host,
         },
         ...network,
+        // 3. Where Daytona forwards everything the allowlist permits. Chained,
+        //    not advisory: an unreachable gateway makes allowed traffic 502
+        //    rather than quietly going direct.
+        outboundProxyUrl: gatewayProxyUrl(credential.connect_address, credential.username),
         ttlMinutes: rest.ttlMinutes ?? ttlMinutes,
       }
 
@@ -216,23 +201,21 @@ export class Daytona extends BaseDaytona {
         phase: 'sandbox-create', verisSandboxId: twin.id, cause })
     }
 
-    // 3. Bring the proxy up and do not return until it is serving. This is what
-    //    makes the first tool call of a session safe.
-    let mode: ProxyTier
+    // 4. Trust the gateway's CA, then prove the tunnel is live. Until the canary
+    //    answers, nothing about this sandbox is worth believing.
     try {
-      mode = await this.bringUpProxy(sandbox, twin.id, v)
+      await writeCa(sandbox, credential.ca_pem)
+      if (v.installCa !== false) await installCa(sandbox)
+      await probeCanary(sandbox, credential.canary_host, twin.id)
     } catch (err) {
       await sandbox.delete().catch(() => {})
       await cleanupTwin()
       throw err
     }
 
-    // The mode label is only knowable now, after the probe.
-    await sandbox.setLabels({ ...sandbox.labels, [LABEL.mode]: mode }).catch(() => {})
-
     return this.attach(sandbox, {
       controlPlane, environmentId: twin.environment_id, twinId: twin.id,
-      mode, egress, ownsTwin,
+      egress, ownsTwin, canaryHost: credential.canary_host,
     })
   }
 
@@ -287,7 +270,9 @@ export class Daytona extends BaseDaytona {
       controlPlane: new ControlPlane({ apiKey, apiBase, sdkVersion: SDK_VERSION }),
       environmentId: labels[LABEL.envId] ?? '',
       twinId,
-      mode: (labels[LABEL.mode] as ProxyTier | undefined) ?? 'cooperative',
+      // Re-minted below when a receipt is actually asked for; the label only
+      // has to survive the reconnect.
+      canaryHost: labels[LABEL.canaryHost] ?? '',
       egress: (labels[LABEL.egress] as EgressMode | undefined) ?? 'strict',
       ownsTwin: labels[LABEL.ownsTwin] !== 'false',
     })
@@ -318,19 +303,6 @@ export class Daytona extends BaseDaytona {
     }
   }
 
-  /** Probe for the transparent tier, then start (or verify) the proxy. */
-  private async bringUpProxy(sandbox: Sandbox, twinId: string, v: VerisOpts): Promise<ProxyTier> {
-    let requested: ProxyTier
-    if (v.tier === 'transparent' || v.tier === 'cooperative') {
-      requested = v.tier
-    } else {
-      const probe = await probeTransparent(sandbox)
-      requested = probe.ok ? 'transparent' : 'cooperative'
-      if (!probe.ok) warnCooperative(probe.reason)
-    }
-    return ensureProxy(sandbox, { twinId, tier: requested })
-  }
-
   /**
    * Hang the Veris surface off the instance, and wrap delete() so teardown is
    * automatic.
@@ -351,18 +323,14 @@ export class Daytona extends BaseDaytona {
     Object.defineProperties(sandbox, {
       veris: { value: veris, enumerable: true, configurable: true },
       verisSandboxId: { value: ctx.twinId, enumerable: true, configurable: true },
-      verisMode: { value: ctx.mode, enumerable: true, configurable: true },
       delete: {
         configurable: true,
         value: async (timeout?: number, wait?: boolean): Promise<void> => {
-          // Stop the proxy and drop the twin before the container goes: a
-          // SIGKILLed proxy runs no teardown of its own.
-          await Promise.all([
-            teardownProxy(sandbox).catch(() => {}),
-            ctx.ownsTwin
-              ? ctx.controlPlane.deleteTwin(ctx.environmentId, ctx.twinId).catch(() => {})
-              : Promise.resolve(),
-          ])
+          // Drop the twin before the container goes. Nothing to stop inside
+          // the sandbox — the gateway is ours and host-side.
+          if (ctx.ownsTwin) {
+            await ctx.controlPlane.deleteTwin(ctx.environmentId, ctx.twinId).catch(() => {})
+          }
           return originalDelete(timeout, wait)
         },
       },

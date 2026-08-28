@@ -1,15 +1,14 @@
-// Builds the Daytona network params. Unlike E2B (denyOut/allowOut arrays plus
-// an egressProxy object), Daytona takes comma-separated strings and enforces
-// them at the runner:
+// Builds the Daytona network params.
 //
-//   domainAllowList   deny-all-except, at the network layer. THE guarantee.
-//   networkAllowList  the same for CIDRs, for data planes that are IP-shaped.
-//   outboundProxyUrl  HTTP(S)_PROXY env vars only — per the SDK's own doc,
-//                     "convenience routing, not a security boundary on its own".
+//   domainAllowList   deny-all-except, enforced at the runner. Verified
+//                     transparent: a client that strips every proxy variable
+//                     still cannot reach a host directly, so this is a network
+//                     boundary and not an env-var convention.
+//   outboundProxyUrl  where Daytona forwards allowed traffic. Chained, not
+//                     advisory — an unreachable one makes allowed traffic 502.
 //
-// Which is why nothing here relies on outboundProxyUrl for safety: the
-// fail-closed property comes entirely from the two allowlists, in BOTH the
-// transparent and the cooperative tier.
+// Together those two are the whole mechanism: the allowlist decides what may
+// leave, and the outbound proxy (the Veris gateway) decides what answers.
 import type { ServiceInfo } from './control-plane'
 
 export type EgressMode = 'strict' | 'open'
@@ -18,16 +17,17 @@ export type EgressMode = 'strict' | 'open'
 export const isHttpUrl = (u: string) => /^https?:/.test(u)
 
 /**
- * Vendor hostnames the twin answers for.
+ * Vendor hostnames the twin answers for. These MUST be on the allowlist.
  *
- * These are deliberately NOT put on the allowlist. In the transparent tier the
- * kernel redirect catches them before they ever reach the network layer; in
- * the cooperative tier a client that ignores HTTP_PROXY dials them for real —
- * and is blocked, because they are absent here. That block is the whole reason
- * the cooperative tier is honest: an env-var-only approach normally has silent
- * gaps, and the allowlist is what makes the gap loud instead.
+ * That reads backwards until you follow the path: the sandbox's traffic goes to
+ * Daytona's proxy, which drops anything not allowlisted and forwards the rest
+ * to `outboundProxyUrl` — the Veris gateway. So a vendor host that is absent
+ * never reaches the gateway and never reaches the twin; it is simply blocked.
  *
- * Exported because the receipt and the docs both need to name them.
+ * Allowing it is not a leak, because the allowlist is not what stands between
+ * the sandbox and the real vendor — the gateway is. Verified: with every proxy
+ * variable stripped, an allowlisted host is still intercepted rather than
+ * dialled directly.
  */
 export function vendorHosts(services: ServiceInfo[]): string[] {
   const hosts = new Set<string>()
@@ -145,8 +145,9 @@ export const DEFAULT_REGISTRY_HOSTS: readonly string[] = [
 export interface BuildNetworkArgs {
   services: ServiceInfo[]
   mode: EgressMode
-  /** Host of the Veris control plane — the in-sandbox proxy fetches routes from it. */
-  apiBaseHost: string
+  /** The Veris gateway's host, and the canary hostname it answers on. Without
+   *  these the sandbox cannot reach the gateway at all. */
+  gatewayHosts: string[]
   /** Extra hostnames the caller wants reachable. */
   allowOut?: string[]
   /** Include DEFAULT_REGISTRY_HOSTS. Default true. */
@@ -160,37 +161,30 @@ export interface NetworkParams {
 }
 
 /**
- * Strict (the default) is deny-all-except: the twin, its data planes, the Veris
- * control plane, and package registries. Vendor hostnames are absent by
- * construction — see vendorHosts() for why that is the point rather than an
- * omission.
+ * Strict (the default) is deny-all-except: the vendor hosts the twin answers
+ * for, the gateway itself, the twin's data planes, and package registries.
  *
  * Open sets no allowlist at all. It exists for debugging and is never the
- * default, because in open mode a client that bypasses the proxy reaches the
- * real vendor and the receipt cannot tell you it happened.
+ * default: with no allowlist there is nothing forcing traffic at the gateway,
+ * and the receipt cannot tell you what slipped past.
  */
 export function buildNetwork(args: BuildNetworkArgs): NetworkParams {
-  const { services, mode, apiBaseHost, allowOut = [], allowRegistries = true } = args
+  const { services, mode, gatewayHosts, allowOut = [], allowRegistries = true } = args
   if (mode === 'open') return {}
 
   const domains = [
-    ...twinHosts(services),
+    ...vendorHosts(services),
+    ...gatewayHosts,
     ...dataPlaneHosts(services),
-    apiBaseHost,
     ...(allowRegistries ? DEFAULT_REGISTRY_HOSTS : []),
     ...allowOut,
   ].filter((h): h is string => Boolean(h))
 
   return {
-    // NOT networkBlockAll: that blocks everything including the twin, and the
+    // NOT networkBlockAll: that blocks everything including the gateway, and the
     // allowlist is what Daytona documents as "unbypassable network-layer
     // enforcement". Blocking all and then allowing is not a shape the API
     // offers; a non-empty domainAllowList IS the deny-by-default.
     domainAllowList: [...new Set(domains)].sort().join(','),
   }
-}
-
-/** The host portion of a control-plane base URL, for the allowlist. */
-export function hostOf(url: string): string {
-  try { return new URL(url).hostname } catch { return '' }
 }

@@ -45,20 +45,6 @@ const REPO_PATH = '/home/daytona/project'
 
 setLogFilePath(LOG_FILE)
 
-// @veris-ai/daytona is the GENERIC Veris integration for Daytona — its default
-// snapshot is veris-sandbox, which carries veris-proxy and a CA and no
-// toolchain at all, because most callers are running their own code rather than
-// an agent. This plugin is the one caller that needs Node and OpenCode baked in,
-// so it names its own image here.
-//
-// Set as env defaults rather than threaded through options so that
-// session-manager.ts stays a pure one-line diff against upstream. An explicit
-// VERIS_SNAPSHOT / VERIS_SNAPSHOT_IMAGE from the user still wins, as does
-// DAYTONA_SNAPSHOT below.
-const VERIS_OPENCODE_VERSION = '0.1.0'
-process.env.VERIS_SNAPSHOT ??= `veris-opencode-${VERIS_OPENCODE_VERSION}`
-process.env.VERIS_SNAPSHOT_IMAGE ??= `ghcr.io/veris-ai/veris-opencode:${VERIS_OPENCODE_VERSION}`
-
 const sessionManager = new DaytonaSessionManager(
   process.env.DAYTONA_API_KEY || '',
   STORAGE_DIR,

@@ -4,11 +4,11 @@ import {
   buildNetwork,
   dataPlaneEnv,
   dataPlaneHosts,
-  hostOf,
   isSafeEnvName,
   twinHosts,
   vendorHosts,
 } from '../../src/network'
+import { gatewayProxyUrl } from '../../src/gateway'
 import type { ServiceInfo } from '../../src/control-plane'
 
 const svc = (over: Partial<ServiceInfo>): ServiceInfo => ({
@@ -19,7 +19,7 @@ const svc = (over: Partial<ServiceInfo>): ServiceInfo => ({
   ...over,
 })
 
-const API_BASE_HOST = 'svc.api.veris.ai'
+const GATEWAY = ['gw.api.veris.ai']
 
 describe('vendorHosts', () => {
   it('collects every route host, sorted and deduped', () => {
@@ -31,56 +31,61 @@ describe('vendorHosts', () => {
 })
 
 describe('buildNetwork', () => {
-  it('NEVER allows the vendor hostnames', () => {
-    // This is the load-bearing assertion of the whole package. In the
-    // transparent tier the redirect catches these before the network layer; in
-    // the cooperative tier a client that ignores HTTP_PROXY must be BLOCKED
-    // here rather than reaching the real Stripe.
-    const net = buildNetwork({ services: [svc({})], mode: 'strict', apiBaseHost: API_BASE_HOST })
-    const allowed = net.domainAllowList!.split(',')
-    expect(allowed).not.toContain('api.stripe.com')
+  it('ALLOWS the vendor hostnames, so Daytona forwards them to the gateway', () => {
+    // Reads backwards until you follow the path. Sandbox traffic goes to
+    // Daytona's proxy, which drops anything unlisted and forwards the rest to
+    // the gateway. A vendor host that is absent never reaches the gateway and
+    // never reaches the twin — it is simply blocked. Allowing it is not a leak,
+    // because the gateway, not the allowlist, is what stands between the
+    // sandbox and the real vendor.
+    const net = buildNetwork({ services: [svc({})], mode: 'strict', gatewayHosts: GATEWAY })
+    expect(net.domainAllowList!.split(',')).toContain('api.stripe.com')
   })
 
-  it('allows the twin, the control plane and the registries', () => {
-    const net = buildNetwork({ services: [svc({})], mode: 'strict', apiBaseHost: API_BASE_HOST })
+  it('allows the gateway itself, and the registries', () => {
+    const net = buildNetwork({ services: [svc({})], mode: 'strict', gatewayHosts: GATEWAY })
     const allowed = net.domainAllowList!.split(',')
-    expect(allowed).toContain('stripe-abc.twin.veris.ai')
-    expect(allowed).toContain(API_BASE_HOST)
+    expect(allowed).toContain('gw.api.veris.ai')
     expect(allowed).toContain('registry.npmjs.org')
     expect(allowed).toContain('pypi.org')
   })
 
+  it('without the gateway host, nothing could reach the twin at all', () => {
+    const net = buildNetwork({ services: [svc({})], mode: 'strict', gatewayHosts: [] })
+    expect(net.domainAllowList!.split(',')).not.toContain('gw.api.veris.ai')
+  })
+
   it('drops the registries when asked, for a twin-only sandbox', () => {
     const net = buildNetwork({
-      services: [svc({})], mode: 'strict', apiBaseHost: API_BASE_HOST, allowRegistries: false,
+      services: [svc({})], mode: 'strict', gatewayHosts: GATEWAY, allowRegistries: false,
     })
     const allowed = net.domainAllowList!.split(',')
     for (const host of DEFAULT_REGISTRY_HOSTS) expect(allowed).not.toContain(host)
-    expect(allowed).toContain('stripe-abc.twin.veris.ai')
+    expect(allowed).toContain('api.stripe.com')
   })
 
   it('splices in the data plane hosts a DSN names', () => {
     const net = buildNetwork({
       services: [svc({ name: 'db', url: 'postgres://u:p@pg-abc.twin.veris.ai:5432/app', env_hint: 'DATABASE_URL', routes: [] })],
-      mode: 'strict', apiBaseHost: API_BASE_HOST,
+      mode: 'strict', gatewayHosts: GATEWAY,
     })
     expect(net.domainAllowList!.split(',')).toContain('pg-abc.twin.veris.ai')
   })
 
   it('carries the caller`s extra allowances', () => {
     const net = buildNetwork({
-      services: [svc({})], mode: 'strict', apiBaseHost: API_BASE_HOST, allowOut: ['internal.corp'],
+      services: [svc({})], mode: 'strict', gatewayHosts: GATEWAY, allowOut: ['internal.corp'],
     })
     expect(net.domainAllowList!.split(',')).toContain('internal.corp')
   })
 
   it('open mode sets NO allowlist, which is why it is not the default', () => {
-    const net = buildNetwork({ services: [svc({})], mode: 'open', apiBaseHost: API_BASE_HOST })
+    const net = buildNetwork({ services: [svc({})], mode: 'open', gatewayHosts: GATEWAY })
     expect(net.domainAllowList).toBeUndefined()
   })
 
   it('never sets networkBlockAll, which would also block the twin', () => {
-    const net = buildNetwork({ services: [svc({})], mode: 'strict', apiBaseHost: API_BASE_HOST })
+    const net = buildNetwork({ services: [svc({})], mode: 'strict', gatewayHosts: GATEWAY })
     expect(net.networkBlockAll).toBeUndefined()
   })
 })
@@ -132,9 +137,21 @@ describe('isSafeEnvName', () => {
     '%s -> %s', (name, ok) => expect(isSafeEnvName(name as string)).toBe(ok))
 })
 
-describe('hostOf', () => {
-  it('extracts a hostname and survives garbage', () => {
-    expect(hostOf('https://svc.api.veris.ai')).toBe('svc.api.veris.ai')
-    expect(hostOf('not a url')).toBe('')
+
+describe('gatewayProxyUrl', () => {
+  it('is http, because Daytona rejects every other scheme', () => {
+    // Verified live: `Unsupported outbound proxy scheme "socks5h". Must be http
+    // or https` — which is the entire reason the gateway needed a CONNECT
+    // listener rather than us pointing Daytona at the SOCKS one.
+    expect(gatewayProxyUrl('gw.api.veris.ai:8080', 'v1.abc')).toMatch(/^http:\/\//)
+  })
+
+  it('carries the sandbox id as the username, which is the demux key', () => {
+    expect(gatewayProxyUrl('gw.api.veris.ai:8080', 'v1.abc'))
+      .toBe('http://v1.abc:x@gw.api.veris.ai:8080')
+  })
+
+  it('percent-encodes userinfo rather than trusting it to be URL-safe', () => {
+    expect(gatewayProxyUrl('gw:8080', 'v1/a b')).toContain('v1%2Fa%20b')
   })
 })

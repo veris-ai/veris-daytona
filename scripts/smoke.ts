@@ -3,22 +3,11 @@
 //   export DAYTONA_API_KEY=… VERIS_API_KEY=… VERIS_ENVIRONMENT_ID=…
 //   npx tsx scripts/smoke.ts
 //
-// Builds the sandbox image from snapshot/base/Dockerfile through Daytona's
-// server-side builder, so nothing needs publishing to a registry first. Cleans
-// up after itself, including on failure — a leaked twin bills silently.
-import { Daytona, Image, isVerisSandbox } from '@veris-ai/daytona'
+// No image, no snapshot, no in-sandbox proxy: egress is routed through the
+// Veris gateway via Daytona's outboundProxyUrl. Cleans up after itself,
+// including on failure — a leaked twin bills silently.
+import { Daytona, isVerisSandbox } from '@veris-ai/daytona'
 import type { Sandbox } from '@veris-ai/daytona'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
-
-const HERE = dirname(fileURLToPath(import.meta.url))
-const DOCKERFILE = join(HERE, '..', 'snapshot', 'base', 'Dockerfile')
-
-// Reused between runs so iterating costs one sandbox, not one image build.
-// SMOKE_FRESH=1 forces a new name, which is what actually exercises
-// first-run-in-an-org snapshot registration.
-const FRESH = process.env.SMOKE_FRESH === '1'
-const SNAPSHOT = FRESH ? `veris-smoke-${Date.now().toString(36)}` : 'veris-smoke-dev'
 
 let step = 0
 const say = (msg: string) => console.log(`\n\x1b[1m${++step}. ${msg}\x1b[0m`)
@@ -45,35 +34,19 @@ async function main() {
   let twinId = ''
 
   try {
-    say('Create a sandbox (registers the snapshot, provisions the twin, starts the proxy)')
-    info(`building from ${DOCKERFILE}`)
-    info('first run builds the image server-side — several minutes is normal')
+    say('Create a sandbox (provisions the twin, mints the credential, routes egress)')
+    info('no image to build: the gateway is host-side, so any image works')
     const t0 = Date.now()
-    sandbox = await daytona.create({
-      veris: {
-        snapshot: SNAPSHOT,
-        snapshotImage: Image.fromDockerfile(DOCKERFILE),
-        onSnapshotLogs: (c) => {
-          // Only the step headers, not 28MB of apt chatter.
-          const m = c.match(/#\d+ \[[\d/]+\] (\w+)|Created snapshot \S+ \((\w+)\)/)
-          if (m) process.stdout.write(`   \x1b[2m${m[0].slice(0, 90)}\x1b[0m\n`)
-        },
-      },
-    })
+    sandbox = await daytona.create({}, { timeout: 300 })
     if (!isVerisSandbox(sandbox)) throw new Error('create() returned a sandbox with NO Veris surface')
     twinId = sandbox.verisSandboxId
     ok(`Daytona sandbox ${sandbox.id}`)
     ok(`Veris twin      ${twinId}`)
     info(`${Math.round((Date.now() - t0) / 1000)}s`)
 
-    say('Interception is already live (create() must not resolve before it is)')
-    const ready = await sandbox.process.executeCommand('test -f /run/veris/ready && echo READY || echo NOT-READY')
-    if (!ready.result?.includes('READY')) throw new Error(`proxy not ready: ${ready.result}`)
-    ok('/run/veris/ready exists — nothing could have outrun the proxy')
-
-    say('Which tier did we get?')
+    say('Egress is tunnelled through the gateway (create() proved it with the canary)')
     const receipt0 = await sandbox.veris.receipt()
-    ok(`tier: ${receipt0.mode}   integrity: ${receipt0.integrity}`)
+    ok(`mode: ${receipt0.mode}   integrity: ${receipt0.integrity}`)
     if (receipt0.leaks.length) info(`blind spots: ${receipt0.leaks.join(', ')}`)
 
     say('What does the twin answer for?')
@@ -84,13 +57,10 @@ async function main() {
     const routed = services.find((s) => s.routes?.length)
     if (!routed) throw new Error('this Veris environment exposes no routed HTTP service — nothing to intercept')
 
-    // The interception environment — what a real caller passes to its commands.
-    const venv = await sandbox.veris.env()
-
     say('Fail-closed: a host the twin does not answer for must be BLOCKED')
     const blocked = await sandbox.process.executeCommand(
       `curl -sS --max-time 20 https://example.com/ -o /dev/null -w 'HTTP %{http_code}' 2>&1 || echo ' BLOCKED'`,
-      undefined, venv, 40)
+      undefined, undefined, 40)
     // Blocked can look like several things, and all of them are fine: curl
     // failing outright (DNS gated by the allowlist), or veris-proxy answering
     // 421 in strict mode. What must NOT happen is a 2xx/3xx, which would mean
@@ -105,15 +75,8 @@ async function main() {
     const host = routed.routes![0]!.host
     const called = await sandbox.process.executeCommand(
       `curl -sS --max-time 30 https://${host}/ -o /dev/null -w 'HTTP %{http_code}' 2>&1 || echo FAILED`,
-      undefined, venv, 60)
+      undefined, undefined, 60)
     info(`curl said: ${called.result?.trim()}`)
-
-    if (called.result?.includes('FAILED') || called.result?.includes('000')) {
-      const log = await sandbox.process.executeCommand(
-        'sh -lc "tail -30 /run/veris/serve.log; echo ---ENV---; cat /run/veris/env 2>/dev/null | head -20"',
-        undefined, undefined, 30).catch(() => ({ result: '(no log)' }))
-      console.log(`\n   \x1b[2m--- veris-proxy log ---\n${log.result}\x1b[0m`)
-    }
 
     say('THE RECEIPT — did the twin actually see it?')
     // This is the assertion the whole product exists for. curl exiting 0 above
@@ -151,7 +114,6 @@ async function main() {
       console.log('\n\x1b[2mcleaning up after failure…\x1b[0m')
       await sandbox.delete().catch((e) => console.error(`   cleanup failed: ${e}`))
     }
-    if (FRESH) await daytona.snapshot.delete(SNAPSHOT).catch(() => {})
   }
 }
 
