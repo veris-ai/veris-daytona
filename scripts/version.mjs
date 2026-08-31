@@ -6,6 +6,7 @@
 // plugin that resolves an SDK it was never built against.
 //
 //   node scripts/version.mjs 0.2.0
+import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 
 const next = process.argv[2]
@@ -44,6 +45,17 @@ edit('daytona-opencode/package.json', (p) => {
   p.dependencies['@veris-ai/daytona'] = `^${next}`
 })
 
-console.log(`both packages -> ${next} (plugin now depends on ^${next})`)
-console.log('next: update CHANGELOG.md, then open a PR. Once it is merged, run the')
-console.log('      `release` workflow from the Actions tab -- it tags and publishes.')
+// package-lock.json carries both workspace versions and the cross-dependency
+// range, and nothing above updates it. A stale lock does not fail here or in
+// review -- it fails in the release run, at `npm ci`, which refuses a lock that
+// disagrees with a package.json. Cheaper to keep them in step than to find out
+// mid-release. --package-lock-only touches no node_modules; --ignore-scripts
+// because regenerating a lock should not run anyone's install hooks.
+execFileSync('npm', ['install', '--package-lock-only', '--ignore-scripts'], {
+  stdio: ['ignore', 'ignore', 'inherit'],
+})
+
+console.log(`both packages -> ${next} (plugin now depends on ^${next}), lockfile updated`)
+console.log('next: update CHANGELOG.md, then open a PR. Once it is merged, publish a')
+console.log(`      GitHub release tagged v${next} -- that runs the release workflow,`)
+console.log('      which publishes both packages to npm.')
