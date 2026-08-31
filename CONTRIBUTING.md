@@ -2,10 +2,17 @@
 
 ```sh
 npm install      # workspaces link @veris-ai/daytona into the plugin
+npm run build    # must come first -- see below
 npm run typecheck
 npm test         # unit tests, no credentials needed
-npm run build
 ```
+
+`build` before `typecheck`, on a clean clone, is not a style preference.
+`veris-daytona/dist/` is gitignored and `@veris-ai/daytona`'s `types` points
+into it, so until the SDK is built the workspace link resolves to a package
+with no type declarations — and the plugin's `tsc` reports that as twenty
+errors in `session-manager.ts` and `veris-receipt.ts` that all trace back to
+one unresolved import. The order in CI is the same, for the same reason.
 
 ## Live verification
 
@@ -63,3 +70,25 @@ it `npm publish` refuses outright.
   until you know the constraint behind them — the inverted allowlist, the absent
   `--strict`, the `user:password` userinfo — and each carries the reason it is
   that way. If you change one, change its reason.
+
+## Regenerating package-lock.json
+
+Always with the platform flags:
+
+```sh
+rm -rf node_modules */node_modules package-lock.json
+npm install --package-lock-only --os=linux --cpu=x64 --libc=glibc
+```
+
+They read as a restriction and are the opposite. `@rollup/rollup-*` declares
+`libc: glibc`; macOS has no libc, so a plain `npm install` on a Mac cannot
+evaluate that constraint and drops every libc-gated optional from the lockfile
+— all 25 rollup binaries, including the Mac's own. `npm ci` on a Linux runner
+then installs a rollup with no native binary and tsup dies with "Cannot find
+module @rollup/rollup-linux-x64-gnu" (npm/cli#4828). Naming a libc makes npm
+evaluate the constraint instead of discarding it, and the lockfile comes out
+with every platform in it, macOS included. esbuild is unaffected only because
+its platform packages declare no `libc`.
+
+Deleting `node_modules` first is part of it: npm resolves against an existing
+tree if it finds one, and will faithfully reproduce the darwin-only mistake.

@@ -36,12 +36,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # No registry-url: it makes setup-node write an .npmrc pinning token auth
       # to a placeholder NODE_AUTH_TOKEN, and npm then never reaches for OIDC.
       # The default registry is npmjs.org anyway, which is where this publishes.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
 
@@ -83,9 +83,13 @@ jobs:
             fi
           done
 
+      # Build first: dist/ is gitignored and the SDK's `types` points into it,
+      # so on a clean checkout nothing can typecheck against @veris-ai/daytona
+      # until it has been built. It also has to precede the pack below, which
+      # asserts on files the build produces.
+      - run: npm run build
       - run: npm run typecheck
       - run: npm test
-      - run: npm run build
 
       # The SDK ships dist/, the plugin ships compiled .opencode/plugin. Both
       # declare README.md in `files` and shipping without one leaves a blank npm

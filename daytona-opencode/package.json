@@ -10,15 +10,15 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/veris-ai/plugins.git",
+    "url": "git+https://github.com/veris-ai/veris-daytona.git",
     "directory": "daytona-opencode"
   },
   "author": "Veris (https://veris.ai)",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/veris-ai/plugins/issues"
+    "url": "https://github.com/veris-ai/veris-daytona/issues"
   },
-  "homepage": "https://github.com/veris-ai/plugins/tree/main/daytona-opencode#readme",
+  "homepage": "https://github.com/veris-ai/veris-daytona/tree/main/daytona-opencode#readme",
   "keywords": [
     "opencode",
     "opencode-plugin",
