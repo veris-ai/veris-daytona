@@ -20,6 +20,24 @@ export type VerisErrorPhase =
  * of any Daytona error: `e instanceof VerisError` cleanly separates Veris
  * failures from Daytona failures in one catch.
  */
+/**
+ * Fold the wrapped error's own message into ours.
+ *
+ * `cause` is preserved either way, but almost nothing that shows an error to a
+ * human walks the cause chain -- OpenCode prints `err.message` and stops. So
+ * "Daytona sandbox create failed" was all anyone saw for what was really
+ * "Invalid credentials": a message that says a thing went wrong and refuses to
+ * say why, which is the most expensive kind of error to be handed.
+ */
+function withCause(message: string, cause: unknown): string {
+  const detail =
+    cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : ''
+  // Already said, or nothing to add.
+  if (!detail || message.includes(detail)) return message
+  const trimmed = detail.length > 200 ? `${detail.slice(0, 200)}…` : detail
+  return `${message}: ${trimmed}`
+}
+
 export class VerisError extends Error {
   readonly phase?: VerisErrorPhase
   /** The Veris twin's sandbox id, when one exists yet. */
@@ -31,7 +49,7 @@ export class VerisError extends Error {
     message: string,
     opts: { phase?: VerisErrorPhase; verisSandboxId?: string; responseBody?: unknown; cause?: unknown } = {},
   ) {
-    super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined)
+    super(withCause(message, opts.cause), opts.cause !== undefined ? { cause: opts.cause } : undefined)
     this.name = new.target.name
     this.phase = opts.phase
     this.verisSandboxId = opts.verisSandboxId

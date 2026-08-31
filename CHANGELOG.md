@@ -2,6 +2,28 @@
 
 Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
+## Unreleased
+
+Two errors that named a failure without naming its cause. Both were found the
+same way — by a user losing an evening to a working setup that reported nothing
+useful.
+
+- **`VerisError` now folds the wrapped error's message into its own.** `cause`
+  was always attached, but almost nothing that shows an error to a human walks
+  the cause chain: OpenCode prints `err.message` and stops. So an invalid
+  Daytona API key surfaced as `Daytona sandbox create failed`, full stop, when
+  the SDK had `DaytonaAuthenticationError: Invalid credentials` in hand the
+  whole time. It now reads `Daytona sandbox create failed: Invalid credentials`.
+  The cause stays reachable; a runaway message is truncated rather than pasted
+  whole.
+- **A 404 creating a twin now explains itself.** Environments belong to one
+  control plane, so the usual cause of that 404 is an id from the *other* one —
+  a prod `VERIS_ENVIRONMENT_ID` against a dev `VERIS_API_BASE`, or the reverse.
+  The old message was `create sandbox in environment kl833…: 404`, which sends
+  people to check their API key and their network first; both are fine, and
+  neither is the problem. It now names the base it asked and says the two
+  variables must agree.
+
 ## 0.2.0-rc.1 — 2026-08-31
 
 The agent could see what the twin received. It can now also ask what the twin
