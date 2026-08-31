@@ -1,0 +1,18 @@
+# The workflows pin their actions by commit SHA, which is what the OpenSSF
+# Scorecard Pinned-Dependencies check wants -- but a SHA pin with nothing
+# bumping it is worse than a tag, because it silently stops receiving security
+# fixes. This is the other half of that decision: Dependabot opens the bumps as
+# reviewable PRs and rewrites both the SHA and its trailing version comment.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Root only. Both packages are npm workspaces, so their manifests resolve
+  # through the root lockfile and Dependabot picks them up from here.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly

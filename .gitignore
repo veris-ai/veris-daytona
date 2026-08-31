@@ -11,3 +11,7 @@ dist/
 daytona-opencode/.opencode/plugin/**/*.js
 daytona-opencode/.opencode/plugin/**/*.js.map
 daytona-opencode/.opencode/plugin/**/*.d.ts
+
+# npm pack output, produced by the release workflow and by hand when checking
+# what actually ships.
+*.tgz

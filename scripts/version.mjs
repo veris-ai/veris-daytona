@@ -14,6 +14,23 @@ if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(next ?? '')) {
   process.exit(2)
 }
 
+// The caret below is only safe while we are pre-1.0. npm's range rule is
+// "allows changes that do not modify the left-most non-zero element", so
+// ^0.1.0 resolves >=0.1.0 <0.2.0-0 -- patch-only, and the plugin genuinely
+// cannot float onto an SDK minor it was never built against. At ^1.0.0 that
+// narrowing disappears and the same line would admit every future 1.x.
+//
+// So the first 1.0.0 needs the cross-dependency changed to an exact pin (or a
+// tilde) below before this script may write it. Refuse until someone has.
+if (Number(next.split('.')[0]) >= 1) {
+  console.error(
+    `refusing to write ${next}: the plugin's dependency on @veris-ai/daytona is a caret ` +
+      `range, which only pins a patch range below 1.0.0. Change it to an exact pin in ` +
+      `this script before releasing 1.x.`,
+  )
+  process.exit(2)
+}
+
 const edit = (path, fn) => {
   const pkg = JSON.parse(readFileSync(path, 'utf8'))
   fn(pkg)
@@ -28,4 +45,5 @@ edit('daytona-opencode/package.json', (p) => {
 })
 
 console.log(`both packages -> ${next} (plugin now depends on ^${next})`)
-console.log('next: update CHANGELOG.md, commit, tag v' + next + ', then `npm run release`')
+console.log('next: update CHANGELOG.md, then open a PR. Once it is merged, run the')
+console.log('      `release` workflow from the Actions tab -- it tags and publishes.')

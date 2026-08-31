@@ -47,6 +47,12 @@ whether it belongs in `@veris-ai/daytona` instead.
 
 ## Releasing
 
+**The `release` workflow is the only way to publish.** There is deliberately no
+`npm run release`: a publish from a laptop uses a long-lived token, which means
+no OIDC, no provenance attestation, and none of the guards below. `0.1.0` went
+out that way and is the one version on npm carrying a registry signature but no
+build attestation.
+
 Both packages version together, and the plugin depends on an exact-minor range
 of the SDK, so bumping one without the other publishes a plugin that resolves an
 SDK it was never built against. `version:set` does both halves:
@@ -54,17 +60,61 @@ SDK it was never built against. `version:set` does both halves:
 ```sh
 npm run version:set 0.2.0     # both package.json files, and the cross-dependency
 # update CHANGELOG.md
-git commit -am "chore: 0.2.0" && git tag v0.2.0
-npm run release               # build, then publish both
+git commit -am "chore: 0.2.0"
+# open a PR, get it merged
 ```
+
+Then **Actions → release → Run workflow**. Tick `dry_run` first if you want the
+rehearsal: it builds, typechecks, tests and packs, asserting on tarball contents,
+size and the absence of a stray `node_modules`, then stops before publishing.
+Run it again without `dry_run` to ship. It publishes the SDK first, then the
+plugin, then asserts both landed with a provenance attestation, then tags and
+cuts the GitHub release.
 
 Both packages are scoped, so both carry `publishConfig.access: public` — without
 it `npm publish` refuses outright.
 
+### If a release fails half-way
+
+Re-run it. Every step that touches the outside world checks first whether it has
+already been done, so a run that published the SDK and then died on the plugin
+will, on the re-run, skip the SDK and publish only the plugin. The same is true
+of the git tag and the GitHub release.
+
+The one thing it will not do is release a version that has *fully* shipped: if
+both packages are already on npm at that version, the run fails with "nothing to
+do", which almost always means the bump was forgotten.
+
+### Prereleases
+
+`version:set` accepts them (`0.2.0-rc.1`) and the workflow derives the npm
+dist-tag from the prerelease identifier — `0.2.0-rc.1` publishes under `rc`,
+`0.2.0-alpha.3` under `alpha`, and a plain `0.2.0` under `latest`. This is not
+optional politeness: npm 11 implemented [RFC 7][rfc7] and now refuses to publish
+a prerelease at all unless `--tag` is passed explicitly.
+
+A numeric identifier (`0.2.0-0`) derives the tag `0`, which npm rejects because
+it parses as semver. The workflow catches that before the build and tells you to
+pass the `dist_tag` input instead.
+
+[rfc7]: https://github.com/npm/rfcs/blob/main/accepted/0007-publish-prerelease.md
+
+### The 1.0.0 blocker
+
+`version:set` refuses to write a `1.x` version, on purpose. npm's range rule is
+"allows changes that do not modify the left-most non-zero element", so `^0.1.0`
+resolves `>=0.1.0 <0.2.0-0` — patch-only, and the plugin genuinely cannot float
+onto an SDK minor it was never built against. At `^1.0.0` that narrowing
+disappears and the same caret would admit every future 1.x. Change the
+cross-dependency in `scripts/version.mjs` to an exact pin before releasing 1.0.0.
+
 ## Conventions
 
 - [Conventional Commits](https://www.conventionalcommits.org/) for commit
-  subjects (`feat:`, `fix:`, `chore:`, `docs:`).
+  subjects (`feat:`, `fix:`, `chore:`, `docs:`). CI enforces this on the **pull
+  request title**, not on the commits in the branch — the repo squash-merges, so
+  the PR title is the subject that actually lands on `main` and the individual
+  commit messages are discarded by the merge.
 - [Semantic Versioning](https://semver.org/). Both packages version together.
 - Comments explain *why*, not *what*. Several decisions in this repo look wrong
   until you know the constraint behind them — the inverted allowlist, the absent
