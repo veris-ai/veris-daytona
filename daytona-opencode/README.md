@@ -71,7 +71,8 @@ baseline, reset it. Nothing to configure: it uses the `VERIS_API_KEY` you
 already set, and is skipped entirely if that is unset.
 
 Two of its tools are denied by default, because this plugin creates and owns the
-session's twin:
+session's twin. OpenCode does not merely refuse a denied tool when it is called
+— it withholds it from the model, so the agent never learns the option exists:
 
 | tool | default | why |
 |---|---|---|
@@ -107,20 +108,44 @@ tools, a config hook, two paragraphs in the system prompt, and a check that the
 Veris coordinates are set. The ten inherited tools, the git-sync flow and the session
 bookkeeping are untouched, so upstream changes stay easy to take.
 
-## Using the veris-sim skills alongside
+## Adding Veris's own plugin alongside
 
-[`opencode-veris-sim`](https://www.npmjs.com/package/opencode-veris-sim) carries
-Veris's reference material on twins — schemas, seeding, faults, webhooks — and
-composes with this plugin:
+[`opencode-veris-sim`](https://www.npmjs.com/package/opencode-veris-sim) is
+Veris's engine-independent OpenCode plugin, from
+[veris-ai/plugins](https://github.com/veris-ai/plugins/tree/main/veris-sim). It
+carries Veris's own workflow for testing against twins — how to read what a
+vendor does, seed the state a test needs, inject faults, and write up the
+evidence — none of which is specific to where the code runs.
 
-```sh
-opencode plugin opencode-veris-sim -g
+The two compose. Put both in the same list:
+
+```jsonc
+// opencode.json
+{
+  "plugin": [
+    "@veris-ai/daytona-opencode",
+    "opencode-veris-sim"
+  ]
+}
 ```
 
-Its `/veris-sim:setup|build|fix` commands describe a different setup: your code
-running on your own machine under `veris-proxy`. In a session backed by this
-plugin the sandbox is the boundary and there is no proxy to start, so those
-commands' steps do not apply. The reference material does.
+Only one `veris` MCP server ends up registered: both plugins claim the name with
+`??=`, so whichever loads first wins and the second is a no-op.
+
+**What you gain, precisely.** Three slash commands — `/veris-sim:setup`,
+`/veris-sim:build`, `/veris-sim:fix` — and the reference material they read: the
+twin's control surface, seeding rows and files, fault rows, webhooks, the shape
+of a PR's evidence section. You do not gain anything the agent reaches on its
+own. `veris-reference` is marked `disable-model-invocation`, so the model will
+not load it unless one of those commands sends it there.
+
+**One thing to ignore.** Those commands were written for a session that has to
+provision its own twin, so they begin by creating one. Here that step is already
+done — the twin came up with the sandbox, and `create_sandbox` is denied — so
+the agent should skip straight to the part that reads the twin.
+
+If you only want the twin knowledge, you do not need this package at all:
+`verisTwin` returns a service's manual directly.
 
 ## Limitations
 
