@@ -39,7 +39,7 @@
   "dependencies": {
     "@veris-ai/daytona": "^0.2.0-rc.1",
     "@daytona/sdk": "^0.204.1",
-    "@opencode-ai/plugin": "1.1.59",
+    "@opencode-ai/plugin": "1.18.25",
     "xdg-basedir": "^5.1.0",
     "zod": "^4.2.1"
   },
