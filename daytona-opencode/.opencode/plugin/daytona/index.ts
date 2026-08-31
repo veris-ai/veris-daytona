@@ -35,6 +35,7 @@ import { toast } from './core/toast'
 import { customTools } from './plugins/custom-tools'
 import { eventHandlers } from './plugins/session-events'
 import { systemPromptTransform } from './plugins/system-transform'
+import { verisConfig } from './plugins/veris-config'
 
 export type { EventSessionDeleted, LogLevel, SandboxInfo, SessionInfo, ProjectSessionData } from './core/types'
 
@@ -54,6 +55,7 @@ const sessionManager = new DaytonaSessionManager(
 async function daytonaPlugin(ctx: PluginInput) {
   toast.initialize(ctx.client?.tui)
   return {
+    config: verisConfig,
     tool: await customTools(ctx, sessionManager),
     event: await eventHandlers(ctx, sessionManager, REPO_PATH),
     'experimental.chat.system.transform': await systemPromptTransform(ctx, REPO_PATH),

@@ -18,6 +18,7 @@ import { grepTool } from './tools/grep'
 import { getPreviewURLTool } from './tools/get-preview-url'
 import { gitSyncTool } from './tools/git-sync'
 import { verisReceiptTool } from './tools/veris-receipt'
+import { verisTwinTool } from './tools/veris-twin'
 
 import type { DaytonaSessionManager } from './core/session-manager'
 import type { PluginInput } from '@opencode-ai/plugin'
@@ -41,5 +42,6 @@ export function createDaytonaTools(
     getPreviewURL: getPreviewURLTool(sessionManager, projectId, worktree, pluginCtx),
     gitSync: gitSyncTool(sessionManager, projectId, worktree, pluginCtx),
     verisReceipt: verisReceiptTool(sessionManager, projectId, worktree, pluginCtx),
+    verisTwin: verisTwinTool(sessionManager, projectId, worktree, pluginCtx),
   }
 }

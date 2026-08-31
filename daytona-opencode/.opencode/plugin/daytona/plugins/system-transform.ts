@@ -37,6 +37,14 @@ export async function systemPromptTransform(ctx: PluginInput, repoPath: string) 
         'read what the twin actually received. If the receipt is empty, the change does not',
         'work yet — report that, do not report success. Cite the receipt when you claim an',
         'integration works.',
+        '',
+        'The twin already exists and this plugin owns its lifecycle: it was created with the',
+        'sandbox and is deleted with it. Do NOT create or delete Veris sandboxes. Run the',
+        'verisTwin tool to get its id (every Veris MCP tool takes one) and to read a',
+        "service's manual before writing code against it. Nothing here runs under",
+        '`veris-proxy` — egress is already intercepted at the sandbox boundary, so any',
+        'instruction to start a proxy or provision a sandbox is describing a different setup',
+        'than this one.',
       ].join('\n'),
     )
   }

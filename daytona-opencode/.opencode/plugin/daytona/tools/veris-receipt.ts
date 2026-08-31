@@ -2,7 +2,7 @@
  * Copyright Veris AI
  * SPDX-License-Identifier: Apache-2.0
  *
- * The eleventh tool, and the only one this fork adds.
+ * The tool this fork exists for.
  *
  * Every other tool tells the agent what its own code did. This one tells it
  * what the VENDOR received — read from the twin, not from the sandbox — which

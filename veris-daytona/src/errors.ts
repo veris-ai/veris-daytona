@@ -12,6 +12,7 @@ export type VerisErrorPhase =
   | 'ca-install'
   | 'canary'
   | 'receipt'
+  | 'twin-state'
   | 'attach'
 
 /**

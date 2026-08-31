@@ -2,6 +2,42 @@
 
 Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
+## 0.2.0-rc.1 — 2026-08-31
+
+The agent could see what the twin received. It can now also ask what the twin
+*is*, and manage its lifecycle — without either package growing a tool surface
+that a second engine integration would have to grow again.
+
+- **The Veris MCP server is registered automatically** (`@veris-ai/daytona-opencode`).
+  Twin lifecycle — read the environment, promote a sandbox to the environment's
+  baseline, reset it — comes from Veris's own MCP rather than from tools
+  reimplemented here, so it stays one codebase across every engine. It uses the
+  `VERIS_API_KEY` already required, and registers nothing when that is unset:
+  a server wired with an empty credential fails every call and reads as a Veris
+  outage rather than a missing setting. Everything is `??=`, so a user's own
+  `opencode.json` wins and an existing `opencode-veris-sim` install does not
+  double-register.
+- **`create_sandbox` and `delete_sandbox` are denied by default**, with
+  `promote_sandbox` and `reset_sandbox` set to ask. The plugin creates and owns
+  the session's twin, which makes the first two always wrong: a second twin takes
+  neither the traffic nor the receipts with it, so an agent would seed it and
+  report success while nothing changed — the exact failure the receipt exists to
+  catch, one layer up.
+- **New tool `verisTwin`** reports the twin's id and the services it answers for,
+  and with a service argument returns that service's manual. The id is the piece
+  no MCP server can supply: the session→sandbox→twin mapping lives in the
+  plugin's session manager, which is also why the receipt is a tool rather than
+  an MCP call.
+- **New `sbx.veris.manual(service)`** on `@veris-ai/daytona`, alongside a new
+  `twin-state` error phase. Like `receipt()`, it reads the twin's control plane
+  from the host — `control_url` stays off the sandbox's allowlist, because code
+  that could reach `/veris/reset` could erase its own receipt.
+- The system prompt now states that the plugin owns the twin's lifecycle and
+  that nothing here runs under `veris-proxy`. This matters when
+  `opencode-veris-sim` is also installed: its commands describe a
+  laptop-plus-proxy setup, and saying the premise is false is cheaper than
+  suppressing them.
+
 ## 0.1.1 — 2026-08-31
 
 No functional change to either package. This is the release-pipeline release:

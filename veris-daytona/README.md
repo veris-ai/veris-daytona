@@ -60,6 +60,7 @@ when it is empty.
 | `receipt(service)` | the same for one service |
 | `assertTouched(service, match?)` | throws unless the twin saw matching traffic |
 | `services()` | what the twin answers for, and where |
+| `manual(service)` | that service's manual: what it models, how its data is shaped |
 | `getDataPlaneEnv()` | `{ DATABASE_URL: … }` for non-HTTP twin services |
 | `getTrustEnv()` | the CA variables injected into the sandbox |
 | `deliverTo(port \| url)` | point vendor webhooks back at your sandbox |
