@@ -127,9 +127,14 @@ jobs:
       # check for exactly this reason -- skip what is published, publish the
       # rest -- which is what makes their publish safe to re-run blindly.
       #
-      # Failing only when *both* are already up keeps the original intent: you
-      # cannot dispatch a version that has fully shipped and be told it
-      # released. That case means someone forgot to bump.
+      # "Both already published" is a warning, not a failure. It was a failure
+      # once, and that cost us: the 0.1.1 run published both packages and then
+      # tripped on the provenance check below, so the tag and GitHub release
+      # never ran -- and the re-run that would have created them aborted here
+      # instead, because by then both packages were up. A step that exists to
+      # make retries safe must not itself be the thing that blocks one. Every
+      # step after this is individually idempotent, so a run with nothing left
+      # to publish is a legitimate no-op that still repairs a missing tag.
       #
       # `npm view pkg@ver version` exits 0 with a version on stdout when it is
       # published and 1 (E404) when the version or the package is absent. Only
@@ -167,8 +172,7 @@ jobs:
           done
 
           if [ "$LEFT" -eq 0 ]; then
-            echo "::error::nothing to do — both packages are already on npm at $V. Bump with 'npm run version:set' first." >&2
-            exit 1
+            echo "::warning::nothing left to publish — both packages are already on npm at $V. Continuing so the tag and GitHub release can be repaired if they are missing. If you meant to ship something new, bump with 'npm run version:set' first."
           fi
 
       # Build first: dist/ is gitignored and the SDK's `types` points into it,
@@ -255,16 +259,30 @@ jobs:
       # it so a silently degraded release fails the run instead of shipping and
       # looking fine. Only for what this run published -- a package skipped
       # above was attested, or not, by an earlier run.
+      #
+      # Polled, not asserted once. The attestation record lands on the registry
+      # a little after the publish returns, and the 0.1.1 run failed here on a
+      # package that *was* correctly attested: it asked 10 seconds after
+      # publishing and the record was not queryable yet. --prefer-online because
+      # a negative answer would otherwise be cached for the rest of the poll.
       - name: Provenance landed
         if: ${{ !inputs.dry_run }}
         run: |
           V='${{ steps.version.outputs.version }}'
+          attested() {
+            npm view --prefer-online "$1@$V" --json 2>/dev/null | jq -e '.dist.attestations' >/dev/null 2>&1
+          }
           check() {
-            npm view "$1@$V" --json | jq -e '.dist.attestations' >/dev/null 2>&1 || {
-              echo "::error::$1@$V published without a provenance attestation — check the Trusted Publisher settings on npmjs.com" >&2
-              exit 1
-            }
-            echo "$1@$V carries a provenance attestation"
+            for attempt in $(seq 1 10); do
+              if attested "$1"; then
+                echo "$1@$V carries a provenance attestation (after ${attempt} attempt(s))"
+                return 0
+              fi
+              echo "no attestation visible for $1@$V yet (attempt $attempt/10) — the registry lags the publish, waiting 10s"
+              sleep 10
+            done
+            echo "::error::$1@$V published without a provenance attestation after 100s — check the Trusted Publisher settings on npmjs.com" >&2
+            exit 1
           }
           [ '${{ steps.plan.outputs.publish_sdk }}' != 'true' ]    || check @veris-ai/daytona
           [ '${{ steps.plan.outputs.publish_plugin }}' != 'true' ] || check @veris-ai/daytona-opencode
