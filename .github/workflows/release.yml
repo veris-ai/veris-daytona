@@ -54,7 +54,7 @@ jobs:
       contents: write # tag + GitHub release
       id-token: write # npm trusted publishing
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # No registry-url: it makes setup-node write an .npmrc pinning token auth
       # to a placeholder NODE_AUTH_TOKEN, and npm then never reaches for OIDC.
