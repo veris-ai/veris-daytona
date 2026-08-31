@@ -1,10 +1,21 @@
 # Publishes both packages to npm, in order.
 #
-# Run manually from the Actions tab. The version comes from
-# veris-daytona/package.json -- both packages version together, so
-# `npm run version:set <v>` is the single place it is bumped. The release flow
-# is: bump in a PR, merge, run this. The input exists only to override that in
-# an emergency.
+# Two ways in, same job. Publishing a GitHub release runs it against that
+# release's tag -- creating the release *is* the release, which is what anyone
+# would expect and what happens if you never open the Actions tab. Dispatching
+# it by hand does the same thing from the default branch, and is also how a
+# half-finished run gets retried.
+#
+# The version comes from the release tag (minus its `v`) on a release event,
+# and from veris-daytona/package.json on a dispatch. Both packages version
+# together, so `npm run version:set <v>` is the single place it is bumped. The
+# flow is: bump in a PR, merge, then cut the release from the merged commit.
+# The inputs exist only to override that in an emergency.
+#
+# The release this workflow creates at the end does not re-trigger it: GitHub
+# does not start workflow runs from events raised with the default GITHUB_TOKEN.
+# So a dispatch that ends in `gh release create` stops there, and the loop the
+# release trigger looks like it should cause cannot happen.
 #
 # Order matters: @veris-ai/daytona goes first, because
 # @veris-ai/daytona-opencode depends on it at the same version. Publishing the
@@ -24,6 +35,8 @@
 name: release
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
@@ -72,13 +85,26 @@ jobs:
       # (RFC 7) hard-errors on a prerelease published without an explicit
       # --tag rather than silently putting it on `latest`. Deriving it early
       # means a bad tag fails before the build instead of after it.
+      #
+      # The event's own fields go through env rather than `${{ }}`: a git tag
+      # may legally contain a single quote, and interpolated into the quoted
+      # assignment below that would end the string and run the rest as shell.
       - name: Resolve version
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_DIST_TAG: ${{ inputs.dist_tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
-          VERSION='${{ inputs.version }}'
+          VERSION="$INPUT_VERSION"
+          # On a release event the tag is the statement of intent -- the release
+          # says which version it is, and the check below then holds the tagged
+          # commit's package.json to it rather than the other way round.
+          [ -n "$VERSION" ] || VERSION="${RELEASE_TAG#v}"
           [ -n "$VERSION" ] || VERSION="$(jq -r .version veris-daytona/package.json)"
 
-          TAG='${{ inputs.dist_tag }}'
+          TAG="$INPUT_DIST_TAG"
           if [ -z "$TAG" ]; then
             case "$VERSION" in
               # 0.2.0-rc.1 -> rc, 0.2.0-alpha.3 -> alpha
@@ -100,6 +126,32 @@ jobs:
             exit 1
           fi
 
+          # A release can be published from any tag, and a tag is free text.
+          # Without this, `nightly` resolves to version "nightly", derives the
+          # dist-tag `latest`, and dies two steps later complaining that
+          # package.json disagrees -- true, but not the actual mistake.
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$VERSION' is not a semver version — a release must be tagged vMAJOR.MINOR.PATCH (a leading 'v' is optional)." >&2
+            exit 1
+          fi
+
+          # GitHub's prerelease checkbox and the npm dist-tag are two claims
+          # about the same release, made in two places by hand. Disagreement
+          # means one of them is wrong, and the expensive direction is silent:
+          # ticking "pre-release" on v0.3.0 still moves npm's `latest` onto it,
+          # so everyone installing the package gets it. Checked only for a
+          # release event -- a dispatch has no checkbox to disagree with.
+          if [ '${{ github.event_name }}' = release ] && [ -z "$INPUT_DIST_TAG" ]; then
+            if [ "$RELEASE_PRERELEASE" = true ] && [ "$TAG" = latest ]; then
+              echo "::error::the GitHub release is marked pre-release but $VERSION would publish to npm's 'latest' — either untick it, or tag the release with a prerelease version like $VERSION-rc.1." >&2
+              exit 1
+            fi
+            if [ "$RELEASE_PRERELEASE" != true ] && [ "$TAG" != latest ]; then
+              echo "::error::$VERSION is a prerelease (npm dist-tag '$TAG') but the GitHub release is not marked pre-release — tick 'Set as a pre-release', or release a stable version." >&2
+              exit 1
+            fi
+          fi
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "dist_tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Publishing @veris-ai/daytona@$VERSION and @veris-ai/daytona-opencode@$VERSION under dist-tag '$TAG'"
@@ -112,7 +164,7 @@ jobs:
           V='${{ steps.version.outputs.version }}'
           node scripts/version.mjs "$V"
           git diff --quiet -- veris-daytona/package.json daytona-opencode/package.json || {
-            echo "::error::package.json versions did not match $V — run 'npm run version:set $V' and commit." >&2
+            echo "::error::the commit this ran on is not bumped to $V — run 'npm run version:set $V', merge it, and cut the release tag from that commit." >&2
             git --no-pager diff -- veris-daytona/package.json daytona-opencode/package.json
             exit 1
           }
