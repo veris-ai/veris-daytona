@@ -34,8 +34,15 @@ jobs:
   # every commit on main carries a `(#N)` -- so the PR title is the subject that
   # actually lands in history, and the individual commit messages are discarded
   # by the merge. Linting those would gate text nobody ever reads.
+  #
+  # Dependabot is exempt. Its titles are structurally conventional and always
+  # correctly scoped -- `chore(deps): Bump x from a to b` -- but capitalised,
+  # which config-conventional rejects under subject-case. That format is not
+  # configurable, so enforcing the rule here does not improve a single commit
+  # message; it just blocks every dependency update, which is what it did to
+  # all six of the first batch.
   commits:
-    if: github.event_name == 'pull_request'
+    if: ${{ github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
