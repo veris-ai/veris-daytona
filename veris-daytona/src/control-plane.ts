@@ -117,6 +117,18 @@ export class ControlPlane {
       ttl_minutes: opts.ttlMinutes,
       metadata: opts.metadata,
     })
+    // A 404 here is almost never a missing endpoint: environments are scoped to
+    // one control plane, so the usual cause is an id from a DIFFERENT one --
+    // a prod VERIS_ENVIRONMENT_ID against a dev VERIS_API_BASE, or the reverse.
+    // The bare "404" sends people to check their key, which is fine, and their
+    // network, which is fine, before they think to check the pairing.
+    if (res.status === 404) {
+      throw new VerisError(
+        `environment '${environmentId}' does not exist on ${this.apiBase}. Environments belong ` +
+        'to one control plane: check that VERIS_ENVIRONMENT_ID and VERIS_API_BASE name the same ' +
+        'one (an id from the other environment gives exactly this 404).',
+        { phase: 'twin-provision', responseBody: await res.text() })
+    }
     return this.json<TwinSandbox>(res, `create sandbox in environment ${environmentId}`, 'twin-provision')
   }
 

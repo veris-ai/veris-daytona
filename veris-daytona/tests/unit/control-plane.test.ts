@@ -47,3 +47,27 @@ describe('extendTtl tolerates a control plane without the contract', () => {
     await expect(cp().extendTtl('env_1', 'sb_1', 20)).resolves.toBeUndefined()
   })
 })
+
+describe('createTwin explains a 404 rather than reporting it', () => {
+  // The regression: "create sandbox in environment kl833…: 404" sent a user
+  // checking their API key and their network before thinking to check that the
+  // environment id and the API base name the same control plane. They did not.
+  it('names the base and the likely cause', async () => {
+    mockFetch(() => ({ status: 404 }))
+    await expect(cp().createTwin('env_from_prod')).rejects.toThrow(
+      /environment 'env_from_prod' does not exist on https:\/\/api\.veris\.ai/)
+    await expect(cp().createTwin('env_from_prod')).rejects.toThrow(
+      /VERIS_ENVIRONMENT_ID and VERIS_API_BASE name the same one/)
+  })
+
+  it('attributes it to twin-provision', async () => {
+    mockFetch(() => ({ status: 404 }))
+    await expect(cp().createTwin('env_1')).rejects.toMatchObject({ phase: 'twin-provision' })
+  })
+
+  // Other failures keep the generic shape; only 404 gets the special reading.
+  it('leaves a 500 alone', async () => {
+    mockFetch(() => ({ status: 500, body: { detail: 'boom' } }))
+    await expect(cp().createTwin('env_1')).rejects.toThrow(/create sandbox in environment env_1: 500/)
+  })
+})
