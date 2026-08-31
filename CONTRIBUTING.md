@@ -81,9 +81,15 @@ already been done, so a run that published the SDK and then died on the plugin
 will, on the re-run, skip the SDK and publish only the plugin. The same is true
 of the git tag and the GitHub release.
 
-The one thing it will not do is release a version that has *fully* shipped: if
-both packages are already on npm at that version, the run fails with "nothing to
-do", which almost always means the bump was forgotten.
+A re-run where *everything* is already published is a legitimate no-op: it warns
+"nothing left to publish", skips both publishes, and still repairs the tag and
+the GitHub release if those are missing. That case is not hypothetical — the
+0.1.1 run published both packages and then failed on the provenance check, so
+the tag never got created and only a re-run could fix it.
+
+The cost of that choice is that dispatching without bumping succeeds quietly
+rather than failing loudly. Read the warning in the log if you expected a
+publish and did not get one.
 
 ### Prereleases
 
