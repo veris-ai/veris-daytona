@@ -2,11 +2,11 @@
 
 Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
-## Unreleased
+## 0.2.0 — 2026-08-31
 
-Two errors that named a failure without naming its cause. Both were found the
-same way — by a user losing an evening to a working setup that reported nothing
-useful.
+Everything in `0.2.0-rc.1` below, promoted unchanged, plus two errors that named
+a failure without naming its cause. Both were found the same way — by a user
+losing an evening to a working setup that reported nothing useful.
 
 - **`VerisError` now folds the wrapped error's message into its own.** `cause`
   was always attached, but almost nothing that shows an error to a human walks

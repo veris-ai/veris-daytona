@@ -58,18 +58,32 @@ of the SDK, so bumping one without the other publishes a plugin that resolves an
 SDK it was never built against. `version:set` does both halves:
 
 ```sh
-npm run version:set 0.2.0     # both package.json files, and the cross-dependency
+npm run version:set 0.2.0     # both package.json files, the cross-dependency, the lockfile
 # update CHANGELOG.md
 git commit -am "chore: 0.2.0"
 # open a PR, get it merged
 ```
 
-Then **Actions → release → Run workflow**. Tick `dry_run` first if you want the
-rehearsal: it builds, typechecks, tests and packs, asserting on tarball contents,
-size and the absence of a stray `node_modules`, then stops before publishing.
-Run it again without `dry_run` to ship. It publishes the SDK first, then the
-plugin, then asserts both landed with a provenance attestation, then tags and
-cuts the GitHub release.
+Then **cut the release**: Releases → Draft a new release → tag `v0.2.0` on the
+merged commit → Publish. Publishing it *is* the release. It runs the workflow,
+which publishes the SDK first, then the plugin, then asserts both landed with a
+provenance attestation, then reconciles the tag and release you just made.
+
+Two things the tag decides. The run takes its version from the tag, so the commit
+the tag points at must be the bumped one — a release cut from an unbumped commit
+fails the version check rather than publishing something nobody asked for. And
+tick *Set as a pre-release* exactly when the version has a prerelease suffix: the
+run refuses the mismatch either way, because ticking it on a stable version still
+moves npm's `latest` onto that version, quietly, for everyone.
+
+**Actions → release → Run workflow** is the same job by hand, for the two cases a
+release event does not cover. A rehearsal: tick `dry_run` and it builds,
+typechecks, tests and packs, asserting on tarball contents, size and the absence
+of a stray `node_modules`, then stops before publishing. And finishing a run that
+died half-way. Dispatched, it has no release to read, so it takes the version from
+`veris-daytona/package.json` and creates the tag and the GitHub release itself at
+the end — which does not re-trigger it, because GitHub does not start runs from
+events raised with the default `GITHUB_TOKEN`.
 
 Both packages are scoped, so both carry `publishConfig.access: public` — without
 it `npm publish` refuses outright.
