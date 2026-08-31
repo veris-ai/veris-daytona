@@ -9,6 +9,7 @@ import { VerisUntouchedError, VerisError } from './errors'
 import { dataPlaneEnv, isHttpUrl } from './network'
 import type { EgressMode } from './network'
 import { probeCanary } from './gateway'
+import { fetchManual } from './state'
 import { vendoredTrustEnv } from './trust'
 
 /** Everything needed to answer Veris queries about a live sandbox. */
@@ -38,6 +39,8 @@ export interface VerisApi {
   readonly sandboxId: string
   readonly mode: 'gateway'
   services(): Promise<ServiceInfo[]>
+  /** The service's own manual: what it models and how its data is shaped. */
+  manual(service: string): Promise<string>
   receipt(): Promise<Receipt>
   receipt(service: string): Promise<ReceiptEntry>
   assertTouched(service: string, match?: TouchMatcher): Promise<void>
@@ -63,6 +66,24 @@ export class VerisApiImpl implements VerisApi {
     return this.ctx.controlPlane.services(this.ctx.twinId)
   }
 
+  /** Resolve a service by name. A typo and a service that exists but saw
+   *  nothing are different failures, so this throws rather than returning
+   *  undefined and letting the caller report an empty result. */
+  private async resolveService(service: string): Promise<ServiceInfo> {
+    const services = await this.services()
+    const svc = services.find((s) => s.name === service)
+    if (!svc) {
+      throw new VerisError(
+        `unknown service '${service}' — the twin has no service by that name (available: ${services.map((s) => s.name).join(', ') || 'none'})`,
+        { verisSandboxId: this.ctx.twinId })
+    }
+    return svc
+  }
+
+  async manual(service: string): Promise<string> {
+    return fetchManual(await this.resolveService(service))
+  }
+
   receipt(): Promise<Receipt>
   receipt(service: string): Promise<ReceiptEntry>
   async receipt(service?: string): Promise<Receipt | ReceiptEntry> {
@@ -71,16 +92,9 @@ export class VerisApiImpl implements VerisApi {
     // is worse than no receipt at all.
     await probeCanary(this.ctx.sandbox, this.ctx.canaryHost, this.ctx.twinId)
 
+    if (service !== undefined) return fetchReceiptEntry(await this.resolveService(service))
+
     const services = await this.services()
-    if (service !== undefined) {
-      const svc = services.find((s) => s.name === service)
-      if (!svc) {
-        throw new VerisError(
-          `unknown service '${service}' — the twin has no service by that name (available: ${services.map((s) => s.name).join(', ') || 'none'})`,
-          { verisSandboxId: this.ctx.twinId })
-      }
-      return fetchReceiptEntry(svc)
-    }
     const entries = await Promise.all(
       services.filter((s) => isHttpUrl(s.control_url)).map(async (svc) => [svc.name, await fetchReceiptEntry(svc)] as const))
     return {

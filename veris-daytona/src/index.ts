@@ -40,6 +40,7 @@ export type { ServiceInfo as VerisServiceInfo, RouteEntry, TwinSandbox } from '.
 export { ControlPlane } from './control-plane'
 export { CA_CERT_PATH, SYSTEM_BUNDLE, VERIS_BUNDLE, VERIS_CA_FILE, vendoredTrustEnv } from './trust'
 export { gatewayProxyUrl } from './gateway'
+export { fetchManual, assertHttpControlPlane } from './state'
 export {
   VerisError,
   MissingCredentialsError,

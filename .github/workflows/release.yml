@@ -238,6 +238,8 @@ jobs:
           listing plugin "daytona-opencode/veris-ai-daytona-opencode-$V.tgz"
           has 'package/.opencode/plugin/index.js'                       "plugin entrypoint missing from the tarball"
           has 'package/.opencode/plugin/daytona/tools/veris-receipt.js' "verisReceipt missing from the tarball"
+          has 'package/.opencode/plugin/daytona/tools/veris-twin.js'    "verisTwin missing from the tarball"
+          has 'package/.opencode/plugin/daytona/plugins/veris-config.js' "the MCP config hook is missing from the tarball"
           has 'package/README.md'                                       "README missing from the plugin tarball"
           echo "$LISTING"
 

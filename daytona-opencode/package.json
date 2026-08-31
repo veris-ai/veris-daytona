@@ -1,6 +1,6 @@
 {
   "name": "@veris-ai/daytona-opencode",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Run every OpenCode session in a Daytona sandbox whose vendor API calls are answered by a Veris twin. One line in opencode.json: unmodified code, real hostnames, and a receipt of what the vendor actually received.",
   "main": "./.opencode/plugin/index.js",
   "types": "./.opencode/plugin/index.d.ts",
@@ -33,10 +33,11 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@veris-ai/daytona": "^0.1.1",
+    "@veris-ai/daytona": "^0.2.0",
     "@daytona/sdk": "^0.204.1",
     "@opencode-ai/plugin": "1.1.59",
     "xdg-basedir": "^5.1.0",
@@ -44,7 +45,8 @@
   },
   "devDependencies": {
     "@types/node": "^22",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.7"
   },
   "publishConfig": {
     "access": "public"
