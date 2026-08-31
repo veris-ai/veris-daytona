@@ -11,6 +11,12 @@
 # plugin against an SDK version npm does not have yet gives anyone who installs
 # it an unresolvable dependency.
 #
+# This workflow is the only way to publish. It is also re-runnable: every step
+# that touches the outside world -- the two publishes, the git tag, the GitHub
+# release -- checks first whether it has already been done. A run that gets
+# half-way and fails can be re-run and it will finish the other half rather
+# than aborting on the half that succeeded.
+#
 # Auth is npm trusted publishing (OIDC): configure once on npmjs.com under each
 # package's Settings -> Trusted Publisher (repo veris-ai/veris-daytona, workflow
 # release.yml). No token, no secret; npm's 2FA rules do not apply to OIDC and
@@ -23,25 +29,37 @@ on:
       version:
         description: "Override version (default: the version in veris-daytona/package.json)"
         required: false
+      dist_tag:
+        description: "Override the npm dist-tag (default: derived from the version)"
+        required: false
       dry_run:
         description: "Build, pack and inspect, but do not publish"
         type: boolean
         default: false
 
 permissions:
-  contents: write # tag + GitHub release
-  id-token: write # npm trusted publishing
+  contents: read
+
+# Publish-then-tag is not atomic, and two dispatches racing through it is the
+# one way to reach a state the per-package guard below cannot untangle. Queue
+# rather than cancel: cancelling mid-publish is exactly what we are avoiding.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # tag + GitHub release
+      id-token: write # npm trusted publishing
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # No registry-url: it makes setup-node write an .npmrc pinning token auth
       # to a placeholder NODE_AUTH_TOKEN, and npm then never reaches for OIDC.
       # The default registry is npmjs.org anyway, which is where this publishes.
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
 
@@ -50,13 +68,41 @@ jobs:
 
       - run: npm ci
 
+      # The dist-tag is resolved here, not at publish time, because npm 11
+      # (RFC 7) hard-errors on a prerelease published without an explicit
+      # --tag rather than silently putting it on `latest`. Deriving it early
+      # means a bad tag fails before the build instead of after it.
       - name: Resolve version
         id: version
         run: |
           VERSION='${{ inputs.version }}'
           [ -n "$VERSION" ] || VERSION="$(jq -r .version veris-daytona/package.json)"
+
+          TAG='${{ inputs.dist_tag }}'
+          if [ -z "$TAG" ]; then
+            case "$VERSION" in
+              # 0.2.0-rc.1 -> rc, 0.2.0-alpha.3 -> alpha
+              *-*) TAG="${VERSION#*-}"; TAG="${TAG%%.*}" ;;
+              *)   TAG=latest ;;
+            esac
+          fi
+
+          # npm refuses a dist-tag that parses as a semver range, so 0.2.0-0
+          # would derive the tag `0` and die at the publish step -- the late
+          # failure this whole step exists to remove. Fail here instead, and
+          # say what to do about it.
+          #
+          # POSIX classes rather than [a-z]: a bracket *range* is collated by
+          # locale, and under en_US.UTF-8 [a-z] matches uppercase too, so
+          # 0.2.0-RC.1 would slip past a range-based check.
+          if [[ ! "$TAG" =~ ^[[:alpha:]][[:alnum:]-]*$ ]]; then
+            echo "::error::'$TAG' is not a usable npm dist-tag — it must start with a letter and hold only letters, digits and hyphens. Pass dist_tag explicitly to override." >&2
+            exit 1
+          fi
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Publishing @veris-ai/daytona@$VERSION and @veris-ai/daytona-opencode@$VERSION"
+          echo "dist_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing @veris-ai/daytona@$VERSION and @veris-ai/daytona-opencode@$VERSION under dist-tag '$TAG'"
 
       # An override, or a half-applied bump, can leave the two packages on
       # different versions or the plugin depending on an SDK version that is not
@@ -73,25 +119,65 @@ jobs:
           DEP="$(jq -r '.dependencies["@veris-ai/daytona"]' daytona-opencode/package.json)"
           [ "$DEP" = "^$V" ] || { echo "::error::plugin depends on $DEP, expected ^$V" >&2; exit 1; }
 
-      # Only when we are actually publishing. The point is to stop a publish
-      # clobbering a version npm already has -- a dry run clobbers nothing, and
-      # gating this on the publish is what makes dry_run usable as a rehearsal
-      # from a released state rather than only from an already-bumped one.
-      - name: Refuse a version npm already has
+      # Per package, not all-or-nothing. The all-or-nothing version of this
+      # check made a partial release unrecoverable: if the SDK published and the
+      # plugin then failed, the retry aborted here on the SDK it had just
+      # successfully published, and the only ways out were publishing the plugin
+      # by hand or burning a version on both. Changesets and pnpm invert the
+      # check for exactly this reason -- skip what is published, publish the
+      # rest -- which is what makes their publish safe to re-run blindly.
+      #
+      # Failing only when *both* are already up keeps the original intent: you
+      # cannot dispatch a version that has fully shipped and be told it
+      # released. That case means someone forgot to bump.
+      #
+      # `npm view pkg@ver version` exits 0 with a version on stdout when it is
+      # published and 1 (E404) when the version or the package is absent. Only
+      # "exit 0 and non-empty" counts as published, so a network flake falls
+      # through to the publish, where npm rejects a genuine duplicate with
+      # EPUBLISHCONFLICT. Fails safe in the direction that cannot lose data.
+      #
+      # Skipped on a dry run: a dry run clobbers nothing, and not gating on the
+      # registry is what makes dry_run usable as a rehearsal from an already
+      # released state rather than only from a freshly bumped one.
+      - name: What is left to publish
+        id: plan
         if: ${{ !inputs.dry_run }}
         run: |
           V='${{ steps.version.outputs.version }}'
-          for pkg in @veris-ai/daytona @veris-ai/daytona-opencode; do
-            if npm view "$pkg@$V" version >/dev/null 2>&1; then
-              echo "::error::$pkg@$V is already on npm. Bump with 'npm run version:set' first." >&2
-              exit 1
+          LEFT=0
+
+          published() {
+            local out
+            out="$(npm view "$1@$V" version 2>/dev/null)" || return 1
+            [ -n "$out" ]
+          }
+
+          for entry in "publish_sdk:@veris-ai/daytona" "publish_plugin:@veris-ai/daytona-opencode"; do
+            key="${entry%%:*}"
+            pkg="${entry#*:}"
+            if published "$pkg"; then
+              echo "::notice::$pkg@$V is already on npm — skipping its publish"
+              echo "$key=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "$pkg@$V is not on npm — will publish"
+              echo "$key=true" >> "$GITHUB_OUTPUT"
+              LEFT=$((LEFT + 1))
             fi
           done
+
+          if [ "$LEFT" -eq 0 ]; then
+            echo "::error::nothing to do — both packages are already on npm at $V. Bump with 'npm run version:set' first." >&2
+            exit 1
+          fi
 
       # Build first: dist/ is gitignored and the SDK's `types` points into it,
       # so on a clean checkout nothing can typecheck against @veris-ai/daytona
       # until it has been built. It also has to precede the pack below, which
       # asserts on files the build produces.
+      #
+      # Unconditional, including on a retry: a re-run should re-prove the
+      # artifacts rather than trust the run that failed.
       - run: npm run build
       - run: npm run typecheck
       - run: npm test
@@ -99,35 +185,94 @@ jobs:
       # The SDK ships dist/, the plugin ships compiled .opencode/plugin. Both
       # declare README.md in `files` and shipping without one leaves a blank npm
       # page — which is exactly what would have happened before this check.
+      #
+      # The node_modules and size checks are the backstop: `files` entries are
+      # directories, so a stray nested install would be shipped wholesale, and
+      # the ceiling is what catches that (and anything like it) before npm does.
+      # Both tarballs are around 70 KB today, so 1 MB is roughly 14x headroom.
       - name: Pack and inspect
         run: |
           V='${{ steps.version.outputs.version }}'
+          MAX_BYTES=1048576
+          LISTING=
+
+          # Listed once into a variable rather than re-running `tar | grep` per
+          # assertion. Not just for speed: `grep -q` exits on its first match,
+          # which SIGPIPEs tar, and under `set -o pipefail` that makes the
+          # pipeline non-zero even on a successful match. These tarballs are
+          # small enough that tar's output fits the pipe buffer and it never
+          # notices -- but that is the pipe buffer holding the check up, not the
+          # code. A herestring has no pipeline and no such dependency.
+          listing() {
+            local label="$1" tgz="$2" bytes
+            LISTING="$(tar -tzf "$tgz")"
+            if grep -q 'node_modules/' <<<"$LISTING"; then
+              echo "::error::$label tarball contains node_modules" >&2
+              grep 'node_modules/' <<<"$LISTING" | head >&2
+              exit 1
+            fi
+            bytes="$(wc -c < "$tgz" | tr -d ' ')"
+            if [ "$bytes" -gt "$MAX_BYTES" ]; then
+              echo "::error::$label tarball is $bytes bytes, over the $MAX_BYTES ceiling" >&2
+              exit 1
+            fi
+            echo "$label tarball: $bytes bytes, $(wc -l <<<"$LISTING" | tr -d ' ') files"
+          }
+
+          has() {
+            grep -qF "$1" <<<"$LISTING" || { echo "::error::$2" >&2; exit 1; }
+          }
 
           ( cd veris-daytona && npm pack )
-          SDK="veris-daytona/veris-ai-daytona-$V.tgz"
-          tar -tzf "$SDK" | grep -q 'package/dist/index.js'  || { echo "::error::dist/index.js missing from the SDK tarball" >&2; exit 1; }
-          tar -tzf "$SDK" | grep -q 'package/dist/index.d.ts' || { echo "::error::type declarations missing from the SDK tarball" >&2; exit 1; }
-          tar -tzf "$SDK" | grep -q 'package/README.md'      || { echo "::error::README missing from the SDK tarball" >&2; exit 1; }
-          tar -tzf "$SDK"
+          listing SDK "veris-daytona/veris-ai-daytona-$V.tgz"
+          has 'package/dist/index.js'   "dist/index.js missing from the SDK tarball"
+          has 'package/dist/index.d.ts' "type declarations missing from the SDK tarball"
+          has 'package/README.md'       "README missing from the SDK tarball"
+          echo "$LISTING"
 
           ( cd daytona-opencode && npm pack )
-          PLUGIN="daytona-opencode/veris-ai-daytona-opencode-$V.tgz"
-          tar -tzf "$PLUGIN" | grep -q 'package/.opencode/plugin/index.js'                    || { echo "::error::plugin entrypoint missing from the tarball" >&2; exit 1; }
-          tar -tzf "$PLUGIN" | grep -q 'package/.opencode/plugin/daytona/tools/veris-receipt.js' || { echo "::error::verisReceipt missing from the tarball" >&2; exit 1; }
-          tar -tzf "$PLUGIN" | grep -q 'package/README.md'                                   || { echo "::error::README missing from the plugin tarball" >&2; exit 1; }
-          tar -tzf "$PLUGIN"
+          listing plugin "daytona-opencode/veris-ai-daytona-opencode-$V.tgz"
+          has 'package/.opencode/plugin/index.js'                       "plugin entrypoint missing from the tarball"
+          has 'package/.opencode/plugin/daytona/tools/veris-receipt.js' "verisReceipt missing from the tarball"
+          has 'package/README.md'                                       "README missing from the plugin tarball"
+          echo "$LISTING"
 
       - name: Publish @veris-ai/daytona
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && steps.plan.outputs.publish_sdk == 'true' }}
         working-directory: veris-daytona
-        run: npm publish
+        run: npm publish --tag '${{ steps.version.outputs.dist_tag }}'
 
       # Second, and only after the SDK is on npm: the plugin depends on it.
       - name: Publish @veris-ai/daytona-opencode
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && steps.plan.outputs.publish_plugin == 'true' }}
         working-directory: daytona-opencode
-        run: npm publish
+        run: npm publish --tag '${{ steps.version.outputs.dist_tag }}'
 
+      # Trusted publishing is configured on npmjs.com, not here, so nothing in
+      # this repo can tell whether it is still switched on. The attestation is
+      # the only evidence the OIDC path actually ran: a token publish leaves
+      # dist.signatures (the registry's own) but no dist.attestations. Assert on
+      # it so a silently degraded release fails the run instead of shipping and
+      # looking fine. Only for what this run published -- a package skipped
+      # above was attested, or not, by an earlier run.
+      - name: Provenance landed
+        if: ${{ !inputs.dry_run }}
+        run: |
+          V='${{ steps.version.outputs.version }}'
+          check() {
+            npm view "$1@$V" --json | jq -e '.dist.attestations' >/dev/null 2>&1 || {
+              echo "::error::$1@$V published without a provenance attestation — check the Trusted Publisher settings on npmjs.com" >&2
+              exit 1
+            }
+            echo "$1@$V carries a provenance attestation"
+          }
+          [ '${{ steps.plan.outputs.publish_sdk }}' != 'true' ]    || check @veris-ai/daytona
+          [ '${{ steps.plan.outputs.publish_plugin }}' != 'true' ] || check @veris-ai/daytona-opencode
+
+      # Both halves are conditional for the same reason the publishes are: a
+      # re-run that finishes a half-done release must not fail on the tag or the
+      # release the first run already created, which would report failure on a
+      # release that actually shipped.
       - name: Tag and GitHub release
         if: ${{ !inputs.dry_run }}
         env:
@@ -135,10 +280,22 @@ jobs:
         run: |
           V='${{ steps.version.outputs.version }}'
           TAG="v$V"
-          git tag "$TAG"
-          git push origin "$TAG"
-          gh release create "$TAG" \
-            --title "v$V" \
-            --notes "$(printf '%s\n' \
-              "- https://www.npmjs.com/package/@veris-ai/daytona/v/$V" \
-              "- https://www.npmjs.com/package/@veris-ai/daytona-opencode/v/$V")"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::notice::tag $TAG already exists on origin — leaving it alone"
+          else
+            git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || git tag "$TAG"
+            git push origin "$TAG"
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::release $TAG already exists — leaving it alone"
+          else
+            PRERELEASE=()
+            [ '${{ steps.version.outputs.dist_tag }}' = latest ] || PRERELEASE=(--prerelease)
+            gh release create "$TAG" "${PRERELEASE[@]}" \
+              --title "v$V" \
+              --notes "$(printf '%s\n' \
+                "- https://www.npmjs.com/package/@veris-ai/daytona/v/$V" \
+                "- https://www.npmjs.com/package/@veris-ai/daytona-opencode/v/$V")"
+          fi

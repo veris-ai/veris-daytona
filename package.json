@@ -11,10 +11,11 @@
     "typecheck": "npm run typecheck -w @veris-ai/daytona && npm run typecheck -w @veris-ai/daytona-opencode",
     "test": "npm run test -w @veris-ai/daytona",
     "smoke": "tsx scripts/smoke.ts",
-    "version:set": "node scripts/version.mjs",
-    "release": "npm run build && npm publish -w @veris-ai/daytona && npm publish -w @veris-ai/daytona-opencode"
+    "version:set": "node scripts/version.mjs"
   },
   "devDependencies": {
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
     "tsx": "^4.23.12"
   }
 }
