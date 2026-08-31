@@ -73,7 +73,12 @@ jobs:
           DEP="$(jq -r '.dependencies["@veris-ai/daytona"]' daytona-opencode/package.json)"
           [ "$DEP" = "^$V" ] || { echo "::error::plugin depends on $DEP, expected ^$V" >&2; exit 1; }
 
+      # Only when we are actually publishing. The point is to stop a publish
+      # clobbering a version npm already has -- a dry run clobbers nothing, and
+      # gating this on the publish is what makes dry_run usable as a rehearsal
+      # from a released state rather than only from an already-bumped one.
       - name: Refuse a version npm already has
+        if: ${{ !inputs.dry_run }}
         run: |
           V='${{ steps.version.outputs.version }}'
           for pkg in @veris-ai/daytona @veris-ai/daytona-opencode; do
