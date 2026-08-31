@@ -2,9 +2,9 @@
 
 Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
-## 0.1.0 — unreleased
+## 0.1.0 — 2026-08-31
 
-First release. Not yet published to npm.
+First release.
 
 ### `@veris-ai/daytona`
 

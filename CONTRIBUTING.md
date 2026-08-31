@@ -2,10 +2,17 @@
 
 ```sh
 npm install      # workspaces link @veris-ai/daytona into the plugin
+npm run build    # must come first -- see below
 npm run typecheck
 npm test         # unit tests, no credentials needed
-npm run build
 ```
+
+`build` before `typecheck`, on a clean clone, is not a style preference.
+`veris-daytona/dist/` is gitignored and `@veris-ai/daytona`'s `types` points
+into it, so until the SDK is built the workspace link resolves to a package
+with no type declarations — and the plugin's `tsc` reports that as twenty
+errors in `session-manager.ts` and `veris-receipt.ts` that all trace back to
+one unresolved import. The order in CI is the same, for the same reason.
 
 ## Live verification
 

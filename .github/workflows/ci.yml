@@ -9,14 +9,20 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
+      # Build first, and not as a matter of taste: dist/ is gitignored, and the
+      # SDK's `types` points into it. On a clean checkout the workspace link
+      # exists but the .d.ts does not, so the plugin's tsc cannot resolve
+      # @veris-ai/daytona and fails with twenty errors that all trace back to
+      # that one. Typechecking before building only ever passes on a machine
+      # with a stale dist/ lying around.
+      - run: npm run build
       # Typechecks both packages, which is what proves the plugin's one-line
       # import against the SDK still resolves.
       - run: npm run typecheck
       - run: npm test
-      - run: npm run build
