@@ -2,7 +2,7 @@
 
 Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
-## 0.2.0 — 2026-08-31
+## 0.2.0-rc.1 — 2026-08-31
 
 The agent could see what the twin received. It can now also ask what the twin
 *is*, and manage its lifecycle — without either package growing a tool surface
