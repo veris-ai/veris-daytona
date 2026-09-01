@@ -9,10 +9,7 @@ export const CA_CERT_PATH = '/usr/local/share/ca-certificates/veris-ca.crt'
 /** The distribution's own bundle, when it has one. */
 export const SYSTEM_BUNDLE = '/etc/ssl/certs/ca-certificates.crt'
 
-/**
- * Our CA alone, world-readable, written before anything needs it.
- * NODE_EXTRA_CA_CERTS is additive by design and takes this.
- */
+/** Our CA alone, world-readable, written before anything needs it. */
 export const VERIS_CA_FILE = '/tmp/veris-ca.crt'
 
 /**
@@ -35,8 +32,15 @@ export const VERIS_BUNDLE = '/tmp/veris-ca-bundle.crt'
  * certificate validation.
  *
  * Every var is path-valued and points at VERIS_BUNDLE (public roots + ours, so
- * passthrough hosts keep verifying), except NODE_EXTRA_CA_CERTS, which is
- * additive by design and takes the single cert.
+ * passthrough hosts keep verifying) — NODE_EXTRA_CA_CERTS included. That var is
+ * additive, but only to Node's BAKED-IN Mozilla roots, never to the system
+ * store — and on Daytona the leaf a client actually validates is signed by
+ * Daytona's proxy CA (its proxy terminates TLS; see installCa's comment), which
+ * lives in the system store and nowhere in Mozilla's roots. Point Node at the
+ * single Veris cert and it can verify neither that leaf nor a directly served
+ * gateway one behind it: UNABLE_TO_VERIFY_LEAF_SIGNATURE on every vendor call.
+ * The bundle carries the system store (Daytona's CA with it) plus ours, so it
+ * is the one file that works in both worlds.
  */
 export function vendoredTrustEnv(): Record<string, string> {
   return {
@@ -57,7 +61,7 @@ export function vendoredTrustEnv(): Record<string, string> {
     NIX_SSL_CERT_FILE: VERIS_BUNDLE,
     PERL_LWP_SSL_CA_FILE: VERIS_BUNDLE,
     CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE: VERIS_BUNDLE,
-    NODE_EXTRA_CA_CERTS: VERIS_CA_FILE,
+    NODE_EXTRA_CA_CERTS: VERIS_BUNDLE,
   }
 }
 

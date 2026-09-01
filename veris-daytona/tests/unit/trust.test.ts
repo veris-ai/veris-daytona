@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest'
-import { sanitizeTrustEnv, vendoredTrustEnv, SYSTEM_BUNDLE, CA_CERT_PATH } from '../../src/trust'
+import { sanitizeTrustEnv, vendoredTrustEnv, SYSTEM_BUNDLE, CA_CERT_PATH, VERIS_BUNDLE } from '../../src/trust'
+
+describe('vendoredTrustEnv', () => {
+  it('points every var — NODE_EXTRA_CA_CERTS included — at the merged bundle', () => {
+    // NODE_EXTRA_CA_CERTS extends Node's baked-in Mozilla roots, not the system
+    // store, and the leaf a Daytona sandbox validates is signed by Daytona's
+    // proxy CA — present only in the system store, hence only in the bundle.
+    // Pointing this var at the lone Veris cert broke every Node vendor call
+    // with UNABLE_TO_VERIFY_LEAF_SIGNATURE.
+    for (const [key, value] of Object.entries(vendoredTrustEnv())) {
+      expect(value, key).toBe(VERIS_BUNDLE)
+    }
+  })
+})
 
 describe('sanitizeTrustEnv', () => {
   it('keeps known vars with path-shaped values', () => {

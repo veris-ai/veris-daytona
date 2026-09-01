@@ -2,6 +2,20 @@
 
 Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
+## 0.2.1 — 2026-09-01
+
+- **`NODE_EXTRA_CA_CERTS` now points at the merged bundle, not the lone Veris
+  cert.** That variable extends Node's *baked-in Mozilla roots*, never the
+  system store — and the leaf Node actually validates in a Daytona sandbox is
+  signed by Daytona's proxy CA, which lives only in the system store. So with
+  the single-cert file, every Node HTTPS call to a vendor host failed with
+  `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, and agents in the sandbox learned to
+  compensate by prepending `NODE_EXTRA_CA_CERTS=/tmp/veris-ca-bundle.crt` to
+  every command by hand. Every other trust variable already pointed at the
+  bundle (system store — Daytona's CA with it — plus ours); Node's was the one
+  exception, and now it isn't. Plain `node` works in a fresh sandbox, no flag,
+  no prefix.
+
 ## 0.2.0 — 2026-08-31
 
 Everything in `0.2.0-rc.1` below, promoted unchanged, plus two errors that named
