@@ -181,7 +181,8 @@ jobs:
       #
       # "Both already published" is a warning, not a failure. It was a failure
       # once, and that cost us: the 0.1.1 run published both packages and then
-      # tripped on the provenance check below, so the tag and GitHub release
+      # tripped on a provenance check this workflow has since dropped, so the
+      # tag and GitHub release
       # never ran -- and the re-run that would have created them aborted here
       # instead, because by then both packages were up. A step that exists to
       # make retries safe must not itself be the thing that blocks one. Every
@@ -319,44 +320,16 @@ jobs:
         working-directory: daytona-opencode
         run: npm publish --tag '${{ steps.version.outputs.dist_tag }}'
 
-      # Trusted publishing is configured on npmjs.com, not here, so nothing in
-      # this repo can tell whether it is still switched on. The attestation is
-      # the only evidence the OIDC path actually ran: a token publish leaves
-      # dist.signatures (the registry's own) but no dist.attestations. Assert on
-      # it so a silently degraded release fails the run instead of shipping and
-      # looking fine. Only for what this run published -- a package skipped
-      # above was attested, or not, by an earlier run.
-      #
-      # Polled, not asserted once. The attestation record lands on the registry
-      # a little after the publish returns, and the 0.1.1 run failed here on a
-      # package that *was* correctly attested: it asked 10 seconds after
-      # publishing and the record was not queryable yet. --prefer-online because
-      # a negative answer would otherwise be cached for the rest of the poll.
-      - name: Provenance landed
-        if: ${{ !inputs.dry_run }}
-        run: |
-          V='${{ steps.version.outputs.version }}'
-          check() {
-            local pkg="$1" out seen=false i
-            for i in $(seq 1 30); do
-              if out="$(npm view "$pkg@$V" --json --prefer-online 2>/dev/null)" && [ -n "$out" ]; then
-                seen=true
-                if jq -e '.dist.attestations' >/dev/null 2>&1 <<<"$out"; then
-                  echo "$pkg@$V carries a provenance attestation (after $i attempt(s))"
-                  return 0
-                fi
-              fi
-              sleep 10
-            done
-            if [ "$seen" = true ]; then
-              echo "::error::$pkg@$V is on npm but no provenance attestation appeared within five minutes — check the Trusted Publisher settings on npmjs.com" >&2
-            else
-              echo "::error::$pkg@$V never became visible on the registry within five minutes of publishing" >&2
-            fi
-            return 1
-          }
-          [ '${{ steps.plan.outputs.publish_sdk }}' != 'true' ]    || check @veris-ai/daytona
-          [ '${{ steps.plan.outputs.publish_plugin }}' != 'true' ] || check @veris-ai/daytona-opencode
+      # Deliberately NO assertion that the provenance attestation landed. One
+      # used to live here, polling dist.attestations for five minutes: the
+      # registry attaches the attestation minutes after publish with no SLA,
+      # and the poll failed the 0.2.0 and 0.2.1 runs back to back on packages
+      # that were in fact correctly attested. A guard that red-flags healthy
+      # releases teaches people to ignore red, which is worse than no guard.
+      # If OIDC ever silently degrades to a token publish, the symptom is
+      # `npm view <pkg>@<version> dist.attestations` coming back empty --
+      # worth a manual spot-check after touching the Trusted Publisher
+      # settings on npmjs.com.
 
       # Both halves are conditional for the same reason the publishes are: a
       # re-run that finishes a half-done release must not fail on the tag or the

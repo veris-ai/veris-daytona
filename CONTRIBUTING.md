@@ -66,8 +66,12 @@ git commit -am "chore: 0.2.0"
 
 Then **cut the release**: Releases → Draft a new release → tag `v0.2.0` on the
 merged commit → Publish. Publishing it *is* the release. It runs the workflow,
-which publishes the SDK first, then the plugin, then asserts both landed with a
-provenance attestation, then reconciles the tag and release you just made.
+which publishes the SDK first, then the plugin, then reconciles the tag and
+release you just made. Provenance attestations come with the OIDC publish, but
+the run does not assert on them: the registry attaches the record minutes after
+publish with no SLA, and the assertion that used to be here failed two healthy
+releases in a row. `npm view <pkg>@<version> dist.attestations` is the manual
+spot-check, worth running after any change to the Trusted Publisher settings.
 
 Two things the tag decides. The run takes its version from the tag, so the commit
 the tag points at must be the bumped one — a release cut from an unbumped commit
@@ -98,8 +102,8 @@ of the git tag and the GitHub release.
 A re-run where *everything* is already published is a legitimate no-op: it warns
 "nothing left to publish", skips both publishes, and still repairs the tag and
 the GitHub release if those are missing. That case is not hypothetical — the
-0.1.1 run published both packages and then failed on the provenance check, so
-the tag never got created and only a re-run could fix it.
+0.1.1 run published both packages and then failed on the provenance check (since
+removed), so the tag never got created and only a re-run could fix it.
 
 The cost of that choice is that dispatching without bumping succeeds quietly
 rather than failing loudly. Read the warning in the log if you expected a
