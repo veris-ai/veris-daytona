@@ -68,26 +68,27 @@ export function vendoredTrustEnv(): Record<string, string> {
 /**
  * Node is the one runtime the trust variables above cannot reach.
  *
- * Daytona overwrites NODE_EXTRA_CA_CERTS inside the sandbox with its own CA
- * file — correct for clients that go through its proxy, which terminates TLS
- * with that CA. Node is not such a client: it ignores HTTPS_PROXY, so its
- * connection is forwarded to the gateway end to end and the leaf it validates
- * is signed by the Veris CA, which Daytona's file lacks. Seen live: plain
- * `node` failed against a vendor host, and passed only with the bundle.
+ * Daytona overwrites NODE_EXTRA_CA_CERTS (and SSL_CERT_FILE) inside the
+ * sandbox with its own CA file — right for clients that go through its proxy,
+ * which terminates TLS with that CA. Node is not such a client: it ignores
+ * HTTPS_PROXY, is forwarded to the gateway end to end, and the leaf it
+ * validates is signed by the Veris CA, which Daytona's file lacks. Seen live:
+ * plain `node` failed against a vendor host, and passed only with our bundle.
  *
- * So instead of a variable Daytona replaces, Node gets a flag Daytona does not
- * touch: --use-openssl-ca makes it read OpenSSL's store, which honours
- * SSL_CERT_FILE — and that one still points at the bundle. NODE_EXTRA_CA_CERTS
- * stays additive on top, so nothing Daytona trusts is lost.
+ * No variable we set survives, so the fix goes where Node is already looking:
+ * our CA is appended to the file NODE_EXTRA_CA_CERTS names, once, when that
+ * file is writable (it is, on Daytona's default image). One more root in
+ * Daytona's file, nothing removed — Node keeps Mozilla's roots, Daytona's CA,
+ * and gains ours. Verified live: 200 from plain `node`, no prefix.
+ *
+ * Idempotent: the first base64 line of our cert is the fingerprint, so a
+ * second run appends nothing. Runs at install and again after every restart,
+ * in case Daytona regenerates the file.
  */
-export const NODE_TRUST_FLAG = '--use-openssl-ca'
-
-/** NODE_OPTIONS with the trust flag appended to whatever the caller set. */
-export function nodeOptionsWithTrust(existing?: string): string {
-  const base = (existing ?? '').trim()
-  if (base.split(/\s+/).includes(NODE_TRUST_FLAG)) return base
-  return base ? `${base} ${NODE_TRUST_FLAG}` : NODE_TRUST_FLAG
-}
+export const NODE_TRUST_APPEND_CMD =
+  `([ -n "$NODE_EXTRA_CA_CERTS" ] && [ -s ${VERIS_CA_FILE} ] && [ -w "$NODE_EXTRA_CA_CERTS" ] && ` +
+  `! grep -qxF "$(sed -n '/BEGIN CERTIFICATE/{n;p;q;}' ${VERIS_CA_FILE})" "$NODE_EXTRA_CA_CERTS" && ` +
+  `{ echo; cat ${VERIS_CA_FILE}; } >> "$NODE_EXTRA_CA_CERTS") 2>/dev/null || true`
 
 /**
  * The store-based install, for stacks that read a trust store rather than an

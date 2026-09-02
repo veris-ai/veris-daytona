@@ -11,7 +11,7 @@
 // tunnel is actually live before anyone trusts a receipt.
 import type { Sandbox } from '@daytona/sdk'
 import { ReceiptIntegrityError, SnapshotUnsupportedError, VerisError } from './errors'
-import { CA_CERT_PATH, CA_INSTALL_CMD, SYSTEM_BUNDLE, VERIS_BUNDLE, VERIS_CA_FILE } from './trust'
+import { CA_CERT_PATH, CA_INSTALL_CMD, NODE_TRUST_APPEND_CMD, SYSTEM_BUNDLE, VERIS_BUNDLE, VERIS_CA_FILE } from './trust'
 
 /** A canary hostname must look like a hostname before it goes in a shell command. */
 const HOSTNAME_RE = /^[A-Za-z0-9.-]+$/
@@ -114,7 +114,7 @@ function assertProxyUrl(raw: string): string {
  * carries both CAs and every public root — so those tools verify rather than
  * break. Node is the exception that makes ours load-bearing today: it ignores
  * HTTPS_PROXY, is forwarded end to end, and validates OUR leaf with Daytona's
- * file — see NODE_TRUST_FLAG in trust.ts for how it is pointed at the bundle.
+ * file — so our CA is appended to that file (NODE_TRUST_APPEND_CMD).
  *
  * The system-store install still runs when it can, for anything that reads the
  * store directly rather than honouring the variables. It is best-effort.
@@ -137,13 +137,10 @@ export async function installCa(sandbox: Sandbox, caPem: string): Promise<void> 
     `SUDO=; [ "$(id -u)" = 0 ] || SUDO="sudo -n"`,
     `($SUDO install -m 0644 -D ${VERIS_CA_FILE} ${CA_CERT_PATH} 2>/dev/null && ` +
       `$SUDO sh -c ${shellQuote(CA_INSTALL_CMD)} 2>/dev/null) || true`,
-    // Daytona points NODE_EXTRA_CA_CERTS at its own CA file, and Node reads
-    // that file whatever else is set. Where it is writable, our CA goes in
-    // too — one more root, nothing removed — so Node verifies the gateway
-    // leaf even when a caller's tooling has clobbered NODE_OPTIONS.
-    `([ -n "$NODE_EXTRA_CA_CERTS" ] && [ -w "$NODE_EXTRA_CA_CERTS" ] && ` +
-      `! grep -qxF "$(sed -n '/BEGIN CERTIFICATE/{n;p;q;}' ${VERIS_CA_FILE})" "$NODE_EXTRA_CA_CERTS" && ` +
-      `{ echo; cat ${VERIS_CA_FILE}; } >> "$NODE_EXTRA_CA_CERTS") 2>/dev/null || true`,
+    // Node reads none of the variables above — Daytona overwrites its one
+    // variable with its own CA file — so our CA goes INTO that file. See
+    // NODE_TRUST_APPEND_CMD; it is what makes plain `node` verify vendor hosts.
+    NODE_TRUST_APPEND_CMD,
     // The bundle is the load-bearing one: fail loudly if it is not there.
     `[ -s ${VERIS_BUNDLE} ] && echo __VERIS_CA_OK__`,
   ].join('; ')
@@ -155,6 +152,16 @@ export async function installCa(sandbox: Sandbox, caPem: string): Promise<void> 
       `cannot be trusted (${(r.result ?? '').trim().slice(0, 200)})`,
       { phase: 'ca-install' })
   }
+}
+
+/**
+ * Re-apply the Node trust append. Called after a sandbox restart: Daytona may
+ * regenerate its CA file on start, and the OpenCode plugin restarts stopped
+ * sandboxes on every reconnect. Best-effort — a sandbox that lost the append
+ * fails loudly on the next Node vendor call, not here.
+ */
+export async function ensureNodeTrust(sandbox: Sandbox): Promise<void> {
+  await sh(sandbox, NODE_TRUST_APPEND_CMD, 30).catch(() => {})
 }
 
 /**

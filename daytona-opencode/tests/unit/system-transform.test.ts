@@ -20,7 +20,7 @@ describe('system prompt', () => {
     // the agent sees a bundle file plus a dozen CA vars and hedges anyway.
     const s = await render()
     expect(s).toContain('TLS trust is already configured')
-    expect(s).toContain('--use-openssl-ca')
+    expect(s).toContain('NODE_EXTRA_CA_CERTS')
     expect(s).toMatch(/Do NOT prefix\s+commands/)
     expect(s).toContain('NODE_TLS_REJECT_UNAUTHORIZED=0')
   })
