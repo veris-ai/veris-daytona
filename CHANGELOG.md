@@ -4,15 +4,30 @@ Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing)
 
 ## Unreleased
 
-- **The system prompt now says TLS trust is preconfigured.** 0.2.1 made plain
-  `node` work in a fresh sandbox, but agents kept prepending
-  `NODE_EXTRA_CA_CERTS=/tmp/veris-ca-bundle.crt` to every command regardless:
-  nothing told them otherwise, and a sandbox with a bundle file and a dozen CA
-  variables pointing at it looks like a setup that needs hand-holding. The
-  Veris section of the prompt now names the variables, says the defaults
-  verify as-is, and tells the agent not to prefix commands, pass `--cacert`,
-  or disable verification — an HTTPS failure under the defaults is a finding
-  to report, not something to paper over per command.
+- **Node now verifies vendor hosts in a fresh sandbox — for real this time.**
+  0.2.1 pointed `NODE_EXTRA_CA_CERTS` at the merged bundle, and it made no
+  difference: Daytona overwrites that variable (and `SSL_CERT_FILE`) inside
+  the sandbox with its own CA file. That file is right for clients that go
+  through Daytona's proxy, which terminates TLS with Daytona's CA. Node is not
+  one of them — it ignores `HTTPS_PROXY`, is forwarded to the gateway end to
+  end, and validates *our* leaf, which Daytona's CA cannot sign for. Every
+  `node` vendor call failed, and agents kept prepending
+  `NODE_EXTRA_CA_CERTS=/tmp/veris-ca-bundle.crt` because it was the only
+  thing that worked. Since no variable we send survives, Node is switched to
+  a store we can reach: `NODE_OPTIONS` carries `--use-openssl-ca`, so Node
+  reads OpenSSL's store — `SSL_CERT_FILE` plus the system certificate
+  directory, where the store install puts the Veris CA and the distribution
+  keeps the public roots. A caller's own `NODE_OPTIONS` are kept, flag
+  appended. Verified live on Daytona's default image: plain `node` returns
+  200 with the flag and the Veris CA in `/etc/ssl/certs`, and
+  `UNABLE_TO_VERIFY_LEAF_SIGNATURE` without the flag. The obvious alternative,
+  appending the Veris CA to Daytona's file, is not available: that file is on
+  a read-only mount, for root too. So this leans on the store install, which
+  needs passwordless sudo and `update-ca-certificates` in the image — both
+  present in Daytona's default one.
+- **The system prompt says TLS trust is preconfigured** and tells the agent
+  not to prefix commands, pass `--cacert`, or disable verification. Landed in
+  #20 ahead of the fix above; it is only true with it.
 - **`veris-daytona run`: the SDK as one command.** `npx @veris-ai/daytona run
   --setup 'npm ci' -- npm test` uploads the current directory (or clones
   `--repo`) into a sandbox whose vendor calls go to a twin, runs the command

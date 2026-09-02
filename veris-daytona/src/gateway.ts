@@ -112,7 +112,10 @@ function assertProxyUrl(raw: string): string {
  * Daytona overrides the best-known trust variables with its own CA, correctly
  * for its proxy. The dozen it does not set still point at this bundle, which
  * carries both CAs and every public root — so those tools verify rather than
- * break.
+ * break. Node is the exception that makes ours load-bearing today: it ignores
+ * HTTPS_PROXY, is forwarded end to end, and validates OUR leaf with Daytona's
+ * file. Its file is read-only, so the store install above is what carries
+ * Node: NODE_TRUST_FLAG makes Node read the directory that install fills.
  *
  * The system-store install still runs when it can, for anything that reads the
  * store directly rather than honouring the variables. It is best-effort.

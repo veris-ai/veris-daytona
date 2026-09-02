@@ -66,6 +66,40 @@ export function vendoredTrustEnv(): Record<string, string> {
 }
 
 /**
+ * Node is the one runtime the trust variables above cannot reach.
+ *
+ * Daytona overwrites NODE_EXTRA_CA_CERTS and SSL_CERT_FILE inside the sandbox
+ * with its own CA file — right for clients that go through its proxy, which
+ * terminates TLS with that CA. Node is not such a client: it ignores
+ * HTTPS_PROXY, is forwarded to the gateway end to end, and the leaf it
+ * validates is signed by the Veris CA, which Daytona's file lacks. Seen live:
+ * plain `node` failed against a vendor host with UNABLE_TO_VERIFY_LEAF_SIGNATURE.
+ */
+
+/**
+ * Node's trust flag. NODE_EXTRA_CA_CERTS is Daytona's, and Node's baked-in
+ * Mozilla roots know neither CA — so switch Node to OpenSSL's store:
+ * --use-openssl-ca loads SSL_CERT_FILE (Daytona's file) AND the system
+ * certificate directory, where CA_INSTALL_CMD puts our CA and the distribution
+ * keeps the public roots. Injected as NODE_OPTIONS, which Daytona leaves alone.
+ *
+ * Verified live on Daytona's default image (uid 1001, passwordless sudo,
+ * update-ca-certificates present): 200 from plain `node` with the flag and
+ * our CA in /etc/ssl/certs; UNABLE_TO_VERIFY_LEAF_SIGNATURE without the flag.
+ * So this leans on the store install succeeding. There is no second route:
+ * Daytona's CA file is on a read-only mount, so appending our CA to it — the
+ * obvious alternative — fails for root too.
+ */
+export const NODE_TRUST_FLAG = '--use-openssl-ca'
+
+/** NODE_OPTIONS with the trust flag appended to whatever the caller set. */
+export function nodeOptionsWithTrust(existing?: string): string {
+  const base = (existing ?? '').trim()
+  if (base.split(/\s+/).includes(NODE_TRUST_FLAG)) return base
+  return base ? `${base} ${NODE_TRUST_FLAG}` : NODE_TRUST_FLAG
+}
+
+/**
  * The store-based install, for stacks that read a trust store rather than an
  * env var — a Java client honours no CA variable at all. Rebuilds the system
  * bundle with the Veris CA (already at CA_CERT_PATH), imports it into the JVM
