@@ -19,9 +19,11 @@ Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing)
   directory, where the store install puts the Veris CA and the distribution
   keeps the public roots. A caller's own `NODE_OPTIONS` are kept, flag
   appended. As a second layer, the CA install appends the Veris CA to the
-  file Daytona pointed `NODE_EXTRA_CA_CERTS` at, and again after every
-  `start()`. Verified live on Daytona's default image: plain `node` returns
-  200 with the flag, and `UNABLE_TO_VERIFY_LEAF_SIGNATURE` without it.
+  file Daytona pointed `NODE_EXTRA_CA_CERTS` at (through `sudo -n`, the file
+  being root-owned), and again after every `start()`. Verified live on
+  Daytona's default image: plain `node` returns 200 with the flag and the
+  Veris CA in `/etc/ssl/certs`, and `UNABLE_TO_VERIFY_LEAF_SIGNATURE` without
+  the flag.
 - **The system prompt says TLS trust is preconfigured** and tells the agent
   not to prefix commands, pass `--cacert`, or disable verification. Landed in
   #20 ahead of the fix above; it is only true with it.

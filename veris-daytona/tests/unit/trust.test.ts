@@ -43,12 +43,14 @@ describe('NODE_TRUST_APPEND_CMD', () => {
   // with its own CA file, so no variable we send reaches Node. Our CA goes
   // into that file instead. Verified live: plain `node` → 200, no prefix.
   it('appends the Veris CA to the file NODE_EXTRA_CA_CERTS names', () => {
-    expect(NODE_TRUST_APPEND_CMD).toContain('"$NODE_EXTRA_CA_CERTS"')
+    expect(NODE_TRUST_APPEND_CMD).toContain('f="$NODE_EXTRA_CA_CERTS"')
     expect(NODE_TRUST_APPEND_CMD).toContain(`cat ${VERIS_CA_FILE}`)
-    expect(NODE_TRUST_APPEND_CMD).toContain('>> "$NODE_EXTRA_CA_CERTS"')
+    expect(NODE_TRUST_APPEND_CMD).toContain('>> "$f"')
   })
-  it('is guarded: only a writable file, only once, never fatal', () => {
-    expect(NODE_TRUST_APPEND_CMD).toContain('[ -w "$NODE_EXTRA_CA_CERTS" ]')
+  it('falls back to sudo: the file is root-owned and the sandbox user is not', () => {
+    expect(NODE_TRUST_APPEND_CMD).toContain('sudo -n tee -a "$f"')
+  })
+  it('is guarded: only once, never fatal', () => {
     expect(NODE_TRUST_APPEND_CMD).toContain('! grep -qxF') // fingerprint already present → no-op
     expect(NODE_TRUST_APPEND_CMD.endsWith('|| true')).toBe(true)
   })
