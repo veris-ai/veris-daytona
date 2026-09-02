@@ -1,0 +1,14 @@
+# Shapes the release notes GitHub generates ("Generate release notes" on the
+# release form, or the workflow's fallback when the box was not ticked).
+#
+# There is no CHANGELOG.md in this repo; these notes are the changelog -- one
+# line per PR, linking to the PR body that holds the reasoning. See
+# CONTRIBUTING.md#releasing.
+#
+# Dependabot is excluded because it opens several PRs a week and the list would
+# be mostly SHA bumps. No label categories: this repo sorts changes by the
+# Conventional Commit prefix in the title, which the generated line carries.
+changelog:
+  exclude:
+    authors:
+      - dependabot

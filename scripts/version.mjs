@@ -56,6 +56,6 @@ execFileSync('npm', ['install', '--package-lock-only', '--ignore-scripts'], {
 })
 
 console.log(`both packages -> ${next} (plugin now depends on ^${next}), lockfile updated`)
-console.log('next: update CHANGELOG.md, then open a PR. Once it is merged, publish a')
-console.log(`      GitHub release tagged v${next} -- that runs the release workflow,`)
-console.log('      which publishes both packages to npm.')
+console.log('next: open a PR. Once it is merged, publish a GitHub release tagged')
+console.log(`      v${next} with "Generate release notes" ticked -- that runs the release`)
+console.log('      workflow, which publishes both packages to npm.')

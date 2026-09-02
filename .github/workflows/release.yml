@@ -355,8 +355,11 @@ jobs:
           else
             PRERELEASE=()
             [ '${{ steps.version.outputs.dist_tag }}' = latest ] || PRERELEASE=(--prerelease)
+            # --generate-notes with --notes: gh puts the given notes first and
+            # the generated "What's Changed" list under them.
             gh release create "$TAG" "${PRERELEASE[@]}" \
               --title "v$V" \
+              --generate-notes \
               --notes "$(printf '%s\n' \
                 "- https://www.npmjs.com/package/@veris-ai/daytona/v/$V" \
                 "- https://www.npmjs.com/package/@veris-ai/daytona-opencode/v/$V")"
