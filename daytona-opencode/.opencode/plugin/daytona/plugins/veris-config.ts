@@ -11,7 +11,7 @@
  * thing to copy is this file.
  *
  * Everything is `??=`, so a user's own opencode.json always wins and someone who
- * already has `opencode-veris-sim` installed globally gets no double
+ * already has `@veris-ai/veris-sim-opencode` installed globally gets no double
  * registration. The whole body is wrapped: a failed registration should surface
  * as a missing MCP server, never as OpenCode failing to start.
  */

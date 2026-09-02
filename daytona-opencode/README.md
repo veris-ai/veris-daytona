@@ -110,7 +110,7 @@ bookkeeping are untouched, so upstream changes stay easy to take.
 
 ## Adding Veris's own plugin alongside
 
-[`opencode-veris-sim`](https://www.npmjs.com/package/opencode-veris-sim) is
+[`@veris-ai/veris-sim-opencode`](https://www.npmjs.com/package/@veris-ai/veris-sim-opencode) is
 Veris's engine-independent OpenCode plugin, from
 [veris-ai/plugins](https://github.com/veris-ai/plugins/tree/main/veris-sim). It
 carries Veris's own workflow for testing against twins — how to read what a
@@ -124,7 +124,7 @@ The two compose. Put both in the same list:
 {
   "plugin": [
     "@veris-ai/daytona-opencode",
-    "opencode-veris-sim"
+    "@veris-ai/veris-sim-opencode"
   ]
 }
 ```
