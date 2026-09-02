@@ -59,7 +59,6 @@ SDK it was never built against. `version:set` does both halves:
 
 ```sh
 npm run version:set 0.2.0     # both package.json files, the cross-dependency, the lockfile
-# update CHANGELOG.md
 git commit -am "chore: 0.2.0"
 # open a PR, get it merged
 ```
@@ -72,6 +71,13 @@ the run does not assert on them: the registry attaches the record minutes after
 publish with no SLA, and the assertion that used to be here failed two healthy
 releases in a row. `npm view <pkg>@<version> dist.attestations` is the manual
 spot-check, worth running after any change to the Trusted Publisher settings.
+
+**The release notes are the changelog.** There is no `CHANGELOG.md`, on
+purpose: every feature PR edited its `Unreleased` section, so concurrent PRs
+conflicted on it, and each entry was a condensed copy of the PR body. The PR
+body is the record of a change — say *why*, not just what — and *Generate
+release notes* on the release form produces the changelog: one line per PR,
+linking to it. Dependabot bumps are excluded by `.github/release.yml`.
 
 Two things the tag decides. The run takes its version from the tag, so the commit
 the tag points at must be the bumped one — a release cut from an unbumped commit
