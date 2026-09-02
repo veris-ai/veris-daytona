@@ -75,6 +75,15 @@ listener.
   without an Authority Key Identifier; the control plane fix is
   services-sandbox#1044. Until it is deployed, `requests` and `urllib` fail
   with `Missing Authority Key Identifier` while `curl` and Node succeed.
+- **Proxy-aware clients terminate at Daytona's CA; proxy-unaware ones at
+  ours.** curl, Python and the rest honour `HTTPS_PROXY`, reach Daytona's
+  proxy, and validate its CA. Node ignores that variable, is forwarded end to
+  end, and validates the Veris CA. Daytona overwrites `NODE_EXTRA_CA_CERTS`
+  and `SSL_CERT_FILE` with its own CA file, so Node is pointed at OpenSSL's
+  store instead (`NODE_OPTIONS=--use-openssl-ca`), which includes the system
+  certificate directory the Veris CA is installed into. Other proxy-unaware
+  runtimes (a JVM with no proxy settings, say) are on the same path and rely
+  on the best-effort store install.
 - **Git sync into the sandbox can fail** with `Host key verification failed`.
   Inherited from upstream `@daytona/opencode`; the agent works, but local
   changes are not pushed in. Setting `DAYTONA_SSH_KNOWN_HOSTS` is the likely fix.

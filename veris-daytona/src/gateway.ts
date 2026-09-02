@@ -112,7 +112,9 @@ function assertProxyUrl(raw: string): string {
  * Daytona overrides the best-known trust variables with its own CA, correctly
  * for its proxy. The dozen it does not set still point at this bundle, which
  * carries both CAs and every public root — so those tools verify rather than
- * break.
+ * break. Node is the exception that makes ours load-bearing today: it ignores
+ * HTTPS_PROXY, is forwarded end to end, and validates OUR leaf with Daytona's
+ * file — see NODE_TRUST_FLAG in trust.ts for how it is pointed at the bundle.
  *
  * The system-store install still runs when it can, for anything that reads the
  * store directly rather than honouring the variables. It is best-effort.
@@ -135,6 +137,13 @@ export async function installCa(sandbox: Sandbox, caPem: string): Promise<void> 
     `SUDO=; [ "$(id -u)" = 0 ] || SUDO="sudo -n"`,
     `($SUDO install -m 0644 -D ${VERIS_CA_FILE} ${CA_CERT_PATH} 2>/dev/null && ` +
       `$SUDO sh -c ${shellQuote(CA_INSTALL_CMD)} 2>/dev/null) || true`,
+    // Daytona points NODE_EXTRA_CA_CERTS at its own CA file, and Node reads
+    // that file whatever else is set. Where it is writable, our CA goes in
+    // too — one more root, nothing removed — so Node verifies the gateway
+    // leaf even when a caller's tooling has clobbered NODE_OPTIONS.
+    `([ -n "$NODE_EXTRA_CA_CERTS" ] && [ -w "$NODE_EXTRA_CA_CERTS" ] && ` +
+      `! grep -qxF "$(sed -n '/BEGIN CERTIFICATE/{n;p;q;}' ${VERIS_CA_FILE})" "$NODE_EXTRA_CA_CERTS" && ` +
+      `{ echo; cat ${VERIS_CA_FILE}; } >> "$NODE_EXTRA_CA_CERTS") 2>/dev/null || true`,
     // The bundle is the load-bearing one: fail loudly if it is not there.
     `[ -s ${VERIS_BUNDLE} ] && echo __VERIS_CA_OK__`,
   ].join('; ')

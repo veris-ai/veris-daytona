@@ -26,7 +26,7 @@ import { VerisApiImpl } from './veris-api'
 import type { VerisApi, VerisContext } from './veris-api'
 import { buildNetwork, dataPlaneEnv } from './network'
 import type { EgressMode } from './network'
-import { CA_CERT_PATH, sanitizeTrustEnv } from './trust'
+import { CA_CERT_PATH, sanitizeTrustEnv, nodeOptionsWithTrust } from './trust'
 import { gatewayProxyUrl, installCa, probeCanary } from './gateway'
 import { MissingCredentialsError, VerisError, VerisGatewayNotOfferedError } from './errors'
 import { SDK_VERSION } from './version'
@@ -171,6 +171,10 @@ export class Daytona extends BaseDaytona {
       // under test at production.
       const verisManaged: Record<string, string> = {
         ...(v.installCa !== false ? sanitizeTrustEnv(undefined) : {}),
+        // Node reads none of the variables above once Daytona has overwritten
+        // NODE_EXTRA_CA_CERTS; the flag makes it read SSL_CERT_FILE instead.
+        // Appended, not replaced: a caller's own NODE_OPTIONS keep working.
+        ...(v.installCa !== false ? { NODE_OPTIONS: nodeOptionsWithTrust(rest.envVars?.NODE_OPTIONS) } : {}),
         ...(v.dataPlaneEnv !== false ? dataPlaneEnv(services) : {}),
         VERIS_SANDBOX_ID: twin.id,
       }

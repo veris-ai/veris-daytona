@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sanitizeTrustEnv, vendoredTrustEnv, SYSTEM_BUNDLE, CA_CERT_PATH, VERIS_BUNDLE } from '../../src/trust'
+import { sanitizeTrustEnv, vendoredTrustEnv, nodeOptionsWithTrust, NODE_TRUST_FLAG, SYSTEM_BUNDLE, CA_CERT_PATH, VERIS_BUNDLE } from '../../src/trust'
 
 describe('vendoredTrustEnv', () => {
   it('points every var — NODE_EXTRA_CA_CERTS included — at the merged bundle', () => {
@@ -35,5 +35,24 @@ describe('sanitizeTrustEnv', () => {
   it('falls back to the full vendored map when nothing valid is served', () => {
     expect(sanitizeTrustEnv({ EVIL: 'x' })).toEqual(vendoredTrustEnv())
     expect(sanitizeTrustEnv(undefined)).toEqual(vendoredTrustEnv())
+  })
+})
+
+describe('nodeOptionsWithTrust', () => {
+  // Daytona overwrites NODE_EXTRA_CA_CERTS in the sandbox with its own CA file,
+  // so the value vendoredTrustEnv sends never reaches Node. The flag makes Node
+  // read OpenSSL's store, hence SSL_CERT_FILE, which Daytona leaves alone.
+  it('is the bare flag when the caller set nothing', () => {
+    expect(nodeOptionsWithTrust(undefined)).toBe(NODE_TRUST_FLAG)
+    expect(nodeOptionsWithTrust('')).toBe(NODE_TRUST_FLAG)
+  })
+  it("appends to the caller's NODE_OPTIONS rather than replacing them", () => {
+    expect(nodeOptionsWithTrust('--max-old-space-size=4096')).toBe(`--max-old-space-size=4096 ${NODE_TRUST_FLAG}`)
+  })
+  it('does not add the flag twice', () => {
+    expect(nodeOptionsWithTrust(`--inspect ${NODE_TRUST_FLAG}`)).toBe(`--inspect ${NODE_TRUST_FLAG}`)
+  })
+  it('is not a served trust var: the control plane cannot set NODE_OPTIONS', () => {
+    expect(sanitizeTrustEnv({ NODE_OPTIONS: '--require /evil.js' })).not.toHaveProperty('NODE_OPTIONS')
   })
 })
