@@ -2,6 +2,18 @@
 
 Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
+## Unreleased
+
+- **The system prompt now says TLS trust is preconfigured.** 0.2.1 made plain
+  `node` work in a fresh sandbox, but agents kept prepending
+  `NODE_EXTRA_CA_CERTS=/tmp/veris-ca-bundle.crt` to every command regardless:
+  nothing told them otherwise, and a sandbox with a bundle file and a dozen CA
+  variables pointing at it looks like a setup that needs hand-holding. The
+  Veris section of the prompt now names the variables, says the defaults
+  verify as-is, and tells the agent not to prefix commands, pass `--cacert`,
+  or disable verification — an HTTPS failure under the defaults is a finding
+  to report, not something to paper over per command.
+
 ## 0.2.1 — 2026-09-01
 
 - **`NODE_EXTRA_CA_CERTS` now points at the merged bundle, not the lone Veris
