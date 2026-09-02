@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sanitizeTrustEnv, vendoredTrustEnv, nodeOptionsWithTrust, NODE_TRUST_FLAG, NODE_TRUST_APPEND_CMD, SYSTEM_BUNDLE, CA_CERT_PATH, VERIS_BUNDLE, VERIS_CA_FILE } from '../../src/trust'
+import { sanitizeTrustEnv, vendoredTrustEnv, nodeOptionsWithTrust, NODE_TRUST_FLAG, SYSTEM_BUNDLE, CA_CERT_PATH, VERIS_BUNDLE } from '../../src/trust'
 
 describe('vendoredTrustEnv', () => {
   it('points every var — NODE_EXTRA_CA_CERTS included — at the merged bundle', () => {
@@ -38,27 +38,10 @@ describe('sanitizeTrustEnv', () => {
   })
 })
 
-describe('NODE_TRUST_APPEND_CMD', () => {
-  // Daytona overwrites NODE_EXTRA_CA_CERTS (and SSL_CERT_FILE) in the sandbox
-  // with its own CA file, so no variable we send reaches Node. Our CA goes
-  // into that file instead. Verified live: plain `node` → 200, no prefix.
-  it('appends the Veris CA to the file NODE_EXTRA_CA_CERTS names', () => {
-    expect(NODE_TRUST_APPEND_CMD).toContain('f="$NODE_EXTRA_CA_CERTS"')
-    expect(NODE_TRUST_APPEND_CMD).toContain(`cat ${VERIS_CA_FILE}`)
-    expect(NODE_TRUST_APPEND_CMD).toContain('>> "$f"')
-  })
-  it('falls back to sudo: the file is root-owned and the sandbox user is not', () => {
-    expect(NODE_TRUST_APPEND_CMD).toContain('sudo -n tee -a "$f"')
-  })
-  it('is guarded: only once, never fatal', () => {
-    expect(NODE_TRUST_APPEND_CMD).toContain('! grep -qxF') // fingerprint already present → no-op
-    expect(NODE_TRUST_APPEND_CMD.endsWith('|| true')).toBe(true)
-  })
-})
-
 describe('nodeOptionsWithTrust', () => {
-  // Verified live: with the flag plain `node` → 200; without it, with only
-  // the append, UNABLE_TO_VERIFY_LEAF_SIGNATURE. The flag is load-bearing.
+  // Verified live: with the flag plain `node` → 200; without it,
+  // UNABLE_TO_VERIFY_LEAF_SIGNATURE. Daytona's CA file is read-only, so there
+  // is no appending our CA to it — the flag plus the store install is the fix.
   it('is the bare flag when the caller set nothing', () => {
     expect(nodeOptionsWithTrust(undefined)).toBe(NODE_TRUST_FLAG)
     expect(nodeOptionsWithTrust('')).toBe(NODE_TRUST_FLAG)

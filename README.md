@@ -81,7 +81,10 @@ listener.
   end, and validates the Veris CA. Daytona overwrites `NODE_EXTRA_CA_CERTS`
   and `SSL_CERT_FILE` with its own CA file, so Node is pointed at OpenSSL's
   store instead (`NODE_OPTIONS=--use-openssl-ca`), which includes the system
-  certificate directory the Veris CA is installed into. Other proxy-unaware
+  certificate directory the Veris CA is installed into. That install needs
+  passwordless sudo and `update-ca-certificates` in the image; Daytona's
+  default image has both, and Daytona's own CA file is read-only, so there is
+  no other route for Node. Other proxy-unaware
   runtimes (a JVM with no proxy settings, say) are on the same path and rely
   on the best-effort store install.
 - **Git sync into the sandbox can fail** with `Host key verification failed`.

@@ -27,7 +27,7 @@ import type { VerisApi, VerisContext } from './veris-api'
 import { buildNetwork, dataPlaneEnv } from './network'
 import type { EgressMode } from './network'
 import { CA_CERT_PATH, nodeOptionsWithTrust, sanitizeTrustEnv } from './trust'
-import { ensureNodeTrust, gatewayProxyUrl, installCa, probeCanary } from './gateway'
+import { gatewayProxyUrl, installCa, probeCanary } from './gateway'
 import { MissingCredentialsError, VerisError, VerisGatewayNotOfferedError } from './errors'
 import { SDK_VERSION } from './version'
 
@@ -172,8 +172,8 @@ export class Daytona extends BaseDaytona {
       const verisManaged: Record<string, string> = {
         ...(v.installCa !== false ? sanitizeTrustEnv(undefined) : {}),
         // Node reads none of the variables above once Daytona has overwritten
-        // them; the flag makes it read OpenSSL's store instead. Appended, not
-        // replaced: a caller's own NODE_OPTIONS keep working.
+        // them; the flag makes it read OpenSSL's store, which the CA install
+        // fills. Appended, not replaced: a caller's own NODE_OPTIONS keep working.
         ...(v.installCa !== false ? { NODE_OPTIONS: nodeOptionsWithTrust(rest.envVars?.NODE_OPTIONS) } : {}),
         ...(v.dataPlaneEnv !== false ? dataPlaneEnv(services) : {}),
         VERIS_SANDBOX_ID: twin.id,
@@ -325,20 +325,10 @@ export class Daytona extends BaseDaytona {
 
     const veris = new VerisApiImpl({ ...ctx, sandbox })
     const originalDelete = sandbox.delete.bind(sandbox)
-    const originalStart = sandbox.start.bind(sandbox)
 
     Object.defineProperties(sandbox, {
       veris: { value: veris, enumerable: true, configurable: true },
       verisSandboxId: { value: ctx.twinId, enumerable: true, configurable: true },
-      // A restart may hand back a regenerated Daytona CA file without our CA
-      // in it; put it back before anything runs Node.
-      start: {
-        configurable: true,
-        value: async (timeout?: number): Promise<void> => {
-          await originalStart(timeout)
-          await ensureNodeTrust(sandbox)
-        },
-      },
       delete: {
         configurable: true,
         value: async (timeout?: number, wait?: boolean): Promise<void> => {

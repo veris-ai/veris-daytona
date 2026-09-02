@@ -86,8 +86,9 @@ export function vendoredTrustEnv(): Record<string, string> {
  * Verified live on Daytona's default image (uid 1001, passwordless sudo,
  * update-ca-certificates present): 200 from plain `node` with the flag and
  * our CA in /etc/ssl/certs; UNABLE_TO_VERIFY_LEAF_SIGNATURE without the flag.
- * So this leans on the store install succeeding; NODE_TRUST_APPEND_CMD is the
- * fallback for an image where it cannot.
+ * So this leans on the store install succeeding. There is no second route:
+ * Daytona's CA file is on a read-only mount, so appending our CA to it — the
+ * obvious alternative — fails for root too.
  */
 export const NODE_TRUST_FLAG = '--use-openssl-ca'
 
@@ -97,19 +98,6 @@ export function nodeOptionsWithTrust(existing?: string): string {
   if (base.split(/\s+/).includes(NODE_TRUST_FLAG)) return base
   return base ? `${base} ${NODE_TRUST_FLAG}` : NODE_TRUST_FLAG
 }
-
-/**
- * Second layer for Node (and for anything else reading Daytona's file, which
- * is also SSL_CERT_FILE): our CA appended to the file NODE_EXTRA_CA_CERTS
- * names. The file is root-owned and the sandbox user is not root, so the
- * append goes through `sudo -n` when a direct write is refused. Idempotent
- * (first base64 line as fingerprint), never fatal, re-run after every restart.
- */
-export const NODE_TRUST_APPEND_CMD =
-  `(f="$NODE_EXTRA_CA_CERTS"; [ -n "$f" ] && [ -s ${VERIS_CA_FILE} ] && ` +
-  `! grep -qxF "$(sed -n '/BEGIN CERTIFICATE/{n;p;q;}' ${VERIS_CA_FILE})" "$f" && ` +
-  `{ { echo; cat ${VERIS_CA_FILE}; } >> "$f" 2>/dev/null || ` +
-  `{ echo; cat ${VERIS_CA_FILE}; } | sudo -n tee -a "$f" >/dev/null; }) 2>/dev/null || true`
 
 /**
  * The store-based install, for stacks that read a trust store rather than an
