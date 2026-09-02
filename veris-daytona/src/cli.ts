@@ -7,7 +7,7 @@ import { Daytona, isVerisSandbox } from './daytona'
 import type { VerisSandbox } from './daytona'
 import { VerisError } from './errors'
 import {
-  TIMED_OUT_EXIT, UPLOAD_EXCLUDES, USAGE, UsageError, commandLine, formatReceipt, parseRunArgs, verdict,
+  TIMED_OUT_EXIT, UPLOAD_EXCLUDES, USAGE, UsageError, commandEnv, commandLine, formatReceipt, parseRunArgs, verdict,
 } from './run'
 import type { RunOptions } from './run'
 import { SDK_VERSION } from './version'
@@ -78,10 +78,7 @@ async function run(opts: RunOptions): Promise<number> {
       if (unpack.exitCode !== 0) throw new VerisError(`unpacking the upload failed: ${unpack.result}`)
     }
 
-    // The CA trust variables and data-plane DSNs were set on the sandbox at
-    // create and session shells inherit them, so only the caller's --env is
-    // added here.
-    const env = opts.env
+    const env = commandEnv(sandbox.veris.getTrustEnv(), opts.env)
 
     if (opts.setup) {
       say(`Setup: ${opts.setup}`)
