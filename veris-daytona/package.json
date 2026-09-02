@@ -13,6 +13,9 @@
       "require": "./dist/index.cjs"
     }
   },
+  "bin": {
+    "veris-daytona": "./dist/cli.js"
+  },
   "sideEffects": false,
   "files": [
     "dist",

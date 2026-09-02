@@ -13,6 +13,13 @@ Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing)
   verify as-is, and tells the agent not to prefix commands, pass `--cacert`,
   or disable verification — an HTTPS failure under the defaults is a finding
   to report, not something to paper over per command.
+- **`veris-daytona run`: the SDK as one command.** `npx @veris-ai/daytona run
+  --setup 'npm ci' -- npm test` uploads the current directory (or clones
+  `--repo`) into a sandbox whose vendor calls go to a twin, runs the command
+  with its output streamed, prints the receipt, and deletes both. A passing
+  command whose twin received nothing exits 1. Before this the package could
+  only be used from code, so every repository needed its own script before an
+  agent or a CI job could run its suite against a twin.
 
 ## 0.2.1 — 2026-09-01
 

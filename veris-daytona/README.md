@@ -45,6 +45,41 @@ await sbx.delete()   // deletes the twin too
 This package re-exports everything from `@daytona/sdk`, so it is the only import
 you need to change. No particular sandbox image is required.
 
+### Or skip the code: `veris-daytona run`
+
+The same four steps as one command, for a test suite that already exists:
+
+```sh
+npx @veris-ai/daytona run --setup 'pip install -e .' -- pytest tests/integration
+```
+
+That uploads the current directory into a fresh sandbox (minus `node_modules`,
+`.venv`, `.git` and the like), runs the setup command, runs the test command
+streaming its output, prints the receipt, and deletes the sandbox and the twin.
+The exit code is the test command's — except that a green suite whose twin
+received nothing exits 1, because a pass without a receipt is not a pass.
+
+```
+Veris receipt — twin sbx_a1b2c3
+  interception: gateway   integrity: verified
+
+1 request(s) reached the twin:
+  stripe: 1 request(s)
+    POST /v1/customers -> 200
+```
+
+| flag | |
+|---|---|
+| `--repo <url> [--ref <branch>]` | clone instead of uploading; `GITHUB_TOKEN` is used for a private repo |
+| `--environment <id>` | instead of `VERIS_ENVIRONMENT_ID` |
+| `--require-service <name>` | the receipt must show this service, repeatable |
+| `--image <name>` / `--snapshot <name>` | what to run in; default is Daytona's default snapshot |
+| `--env KEY=VALUE` | exported to both commands, repeatable |
+| `--timeout <seconds>` | for the test command; default 1800 |
+| `--keep` | leave the sandbox and twin up and print their ids |
+
+`veris-daytona run --help` lists everything.
+
 ### Why `assertTouched` and not just a green suite
 
 A test suite that skipped its integration and one that exercised it look
@@ -122,6 +157,11 @@ four systems involved refused:
   cannot be used; `create()` then fails at `credential-mint` saying so.
 - **QUIC/HTTP3 and ECH are not intercepted.** The gateway relays TCP. Both are
   reported in the receipt's `leaks` rather than silently omitted.
+- **The image needs `curl`.** The canary probe runs it; a slim image without
+  it fails `create()` in the `canary` phase.
+- **Python 3.13+ needs a gateway that mints strict-verifier-safe leaves**
+  (services-sandbox#1044). Until deployed, `requests` fails with
+  `Missing Authority Key Identifier` while `curl` and Node succeed.
 
 ## License
 
