@@ -45,6 +45,14 @@ export async function systemPromptTransform(ctx: PluginInput, repoPath: string) 
         '`veris-proxy` — egress is already intercepted at the sandbox boundary, so any',
         'instruction to start a proxy or provision a sandbox is describing a different setup',
         'than this one.',
+        '',
+        'TLS trust is already configured. The sandbox environment points every CA variable',
+        '(`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` and',
+        'the rest) at a bundle that carries the public roots plus the gateway CA, so plain',
+        '`node`, `curl`, `python`, `pip` and `npm` verify vendor hosts as-is. Do NOT prefix',
+        'commands with `NODE_EXTRA_CA_CERTS=...`, pass `--cacert`, or set',
+        '`NODE_TLS_REJECT_UNAUTHORIZED=0`: they change nothing, and an HTTPS failure with the',
+        'defaults is a finding to report, not something to paper over per command.',
       ].join('\n'),
     )
   }
