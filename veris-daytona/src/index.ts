@@ -38,7 +38,7 @@ export type { EgressMode, NetworkParams } from './network'
 export { DEFAULT_REGISTRY_HOSTS, vendorHosts, twinHosts, dataPlaneHosts } from './network'
 export type { ServiceInfo as VerisServiceInfo, RouteEntry, TwinSandbox } from './control-plane'
 export { ControlPlane } from './control-plane'
-export { CA_CERT_PATH, SYSTEM_BUNDLE, VERIS_BUNDLE, VERIS_CA_FILE, NODE_TRUST_APPEND_CMD, vendoredTrustEnv } from './trust'
+export { CA_CERT_PATH, SYSTEM_BUNDLE, VERIS_BUNDLE, VERIS_CA_FILE, NODE_TRUST_APPEND_CMD, NODE_TRUST_FLAG, nodeOptionsWithTrust, vendoredTrustEnv } from './trust'
 export { gatewayProxyUrl } from './gateway'
 export { fetchManual, assertHttpControlPlane } from './state'
 export {

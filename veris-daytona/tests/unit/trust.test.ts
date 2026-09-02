@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sanitizeTrustEnv, vendoredTrustEnv, NODE_TRUST_APPEND_CMD, SYSTEM_BUNDLE, CA_CERT_PATH, VERIS_BUNDLE, VERIS_CA_FILE } from '../../src/trust'
+import { sanitizeTrustEnv, vendoredTrustEnv, nodeOptionsWithTrust, NODE_TRUST_FLAG, NODE_TRUST_APPEND_CMD, SYSTEM_BUNDLE, CA_CERT_PATH, VERIS_BUNDLE, VERIS_CA_FILE } from '../../src/trust'
 
 describe('vendoredTrustEnv', () => {
   it('points every var — NODE_EXTRA_CA_CERTS included — at the merged bundle', () => {
@@ -52,7 +52,22 @@ describe('NODE_TRUST_APPEND_CMD', () => {
     expect(NODE_TRUST_APPEND_CMD).toContain('! grep -qxF') // fingerprint already present → no-op
     expect(NODE_TRUST_APPEND_CMD.endsWith('|| true')).toBe(true)
   })
-  it('does not inject NODE_OPTIONS', () => {
-    expect(vendoredTrustEnv()).not.toHaveProperty('NODE_OPTIONS')
+})
+
+describe('nodeOptionsWithTrust', () => {
+  // Verified live: with the flag plain `node` → 200; without it, with only
+  // the append, UNABLE_TO_VERIFY_LEAF_SIGNATURE. The flag is load-bearing.
+  it('is the bare flag when the caller set nothing', () => {
+    expect(nodeOptionsWithTrust(undefined)).toBe(NODE_TRUST_FLAG)
+    expect(nodeOptionsWithTrust('')).toBe(NODE_TRUST_FLAG)
+  })
+  it("appends to the caller's NODE_OPTIONS rather than replacing them", () => {
+    expect(nodeOptionsWithTrust('--max-old-space-size=4096')).toBe(`--max-old-space-size=4096 ${NODE_TRUST_FLAG}`)
+  })
+  it('does not add the flag twice', () => {
+    expect(nodeOptionsWithTrust(`--inspect ${NODE_TRUST_FLAG}`)).toBe(`--inspect ${NODE_TRUST_FLAG}`)
+  })
+  it('is not a served trust var: the control plane cannot set NODE_OPTIONS', () => {
+    expect(sanitizeTrustEnv({ NODE_OPTIONS: '--require /evil.js' })).not.toHaveProperty('NODE_OPTIONS')
   })
 })
