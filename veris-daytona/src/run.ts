@@ -180,3 +180,23 @@ export const UPLOAD_EXCLUDES: readonly string[] = [
   '.git', 'node_modules', '.venv', 'venv', '__pycache__', '.pytest_cache', '.mypy_cache',
   '.ruff_cache', 'dist', 'build', 'target', '.next', '.turbo', 'coverage', '.DS_Store',
 ]
+
+/** Exit status coreutils `timeout` reports when it had to stop the command. */
+export const TIMED_OUT_EXIT = 124
+
+/**
+ * The one shell line a session runs: cd, exports, then the command under
+ * coreutils `timeout` so a hung suite is stopped inside the sandbox. Images
+ * without `timeout` run the command bare; the client-side backstop still
+ * applies.
+ */
+export function commandLine(cwd: string, env: Record<string, string>, command: string, timeoutSeconds: number): string {
+  const exports = Object.entries(env).map(([k, v]) => `export ${k}=${shellQuote(v)};`).join(' ')
+  const q = shellQuote(command)
+  return `cd ${shellQuote(cwd)} && ${exports} if command -v timeout >/dev/null 2>&1; ` +
+    `then timeout -k 10 ${Math.ceil(timeoutSeconds)} sh -c ${q}; else sh -c ${q}; fi`
+}
+
+export function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`
+}

@@ -7,7 +7,7 @@ import { Daytona, isVerisSandbox } from './daytona'
 import type { VerisSandbox } from './daytona'
 import { VerisError } from './errors'
 import {
-  UPLOAD_EXCLUDES, USAGE, UsageError, formatReceipt, parseRunArgs, verdict,
+  TIMED_OUT_EXIT, UPLOAD_EXCLUDES, USAGE, UsageError, commandLine, formatReceipt, parseRunArgs, verdict,
 } from './run'
 import type { RunOptions } from './run'
 import { SDK_VERSION } from './version'
@@ -129,36 +129,48 @@ function packCwd(): Buffer {
  * return its exit code. A session is used instead of executeCommand because
  * the latter returns only when the command ends, and a test suite can take
  * many minutes with nothing to show for it in between.
+ *
+ * Two timeouts guard a hung command: coreutils `timeout` inside the sandbox
+ * (exit 124), and a client-side backstop a little later that drops the
+ * session, for images without `timeout`. Either way the run goes on to the
+ * receipt and fails on the exit code, rather than waiting for the sandbox TTL.
  */
 async function stream(
   sandbox: VerisSandbox, command: string, cwd: string, env: Record<string, string>, timeoutSeconds: number,
 ): Promise<number> {
   const session = `veris-run-${randomUUID().slice(0, 8)}`
   await sandbox.process.createSession(session)
+  let timer: NodeJS.Timeout | undefined
   try {
-    const exports = Object.entries(env).map(([k, v]) => `export ${k}=${shellQuote(v)};`).join(' ')
-    const line = `cd ${shellQuote(cwd)} && ${exports} ${command}`
-    const started = await sandbox.process.executeSessionCommand(session, { command: line, runAsync: true }, timeoutSeconds)
+    const started = await sandbox.process.executeSessionCommand(
+      session, { command: commandLine(cwd, env, command, timeoutSeconds), runAsync: true }, 60)
     const cmdId = started.cmdId
     if (!cmdId) throw new VerisError('Daytona did not return a command id for the session command')
 
-    const deadline = Date.now() + timeoutSeconds * 1000
-    await sandbox.process.getSessionCommandLogs(session, cmdId,
-      (chunk) => process.stdout.write(chunk), (chunk) => process.stderr.write(chunk))
+    const backstopMs = (timeoutSeconds + 30) * 1000
+    const backstop = new Promise<'timeout'>((resolve) => { timer = setTimeout(() => resolve('timeout'), backstopMs) })
+    const logs = sandbox.process.getSessionCommandLogs(session, cmdId,
+      (chunk) => process.stdout.write(chunk), (chunk) => process.stderr.write(chunk)).then(() => 'done' as const)
+    if (await Promise.race([logs, backstop]) === 'timeout') {
+      process.stderr.write(`\ncommand still running after ${timeoutSeconds}s; stopping it\n`)
+      return TIMED_OUT_EXIT
+    }
+
     // The log stream closing does not guarantee the exit status is recorded yet.
+    const deadline = Date.now() + 30_000
     for (;;) {
       const cmd = await sandbox.process.getSessionCommand(session, cmdId)
-      if (typeof cmd.exitCode === 'number') return cmd.exitCode
-      if (Date.now() > deadline) throw new VerisError(`command still running after ${timeoutSeconds}s`)
+      if (typeof cmd.exitCode === 'number') {
+        if (cmd.exitCode === TIMED_OUT_EXIT) process.stderr.write(`\ncommand timed out after ${timeoutSeconds}s\n`)
+        return cmd.exitCode
+      }
+      if (Date.now() > deadline) throw new VerisError('command finished but Daytona never reported its exit code')
       await new Promise((r) => setTimeout(r, 500))
     }
   } finally {
+    if (timer) clearTimeout(timer)
     await sandbox.process.deleteSession(session).catch(() => {})
   }
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
 main(process.argv.slice(2)).then(

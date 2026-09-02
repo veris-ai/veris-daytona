@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { UsageError, formatReceipt, parseRunArgs, shellJoin, verdict } from '../../src/run'
+import { UsageError, commandLine, formatReceipt, parseRunArgs, shellJoin, verdict } from '../../src/run'
 import type { Receipt, ReceiptEntry } from '../../src/receipt'
 
 const entry = (name: string, requests: number): ReceiptEntry => ({
@@ -96,5 +96,15 @@ describe('formatReceipt', () => {
     expect(text).toContain('stripe: 2 request(s)')
     expect(text).toContain('POST /v1/0 -> 200')
     expect(text).toContain('github: 0 request(s)')
+  })
+})
+
+describe('commandLine', () => {
+  it('runs the command under coreutils timeout so --timeout stops a hung suite inside the sandbox', () => {
+    const line = commandLine('/home/daytona/veris-run', { A: '1' }, 'make test', 90)
+    expect(line).toContain("cd '/home/daytona/veris-run' && export A='1';")
+    expect(line).toContain("timeout -k 10 90 sh -c 'make test'")
+    // and still runs it where the image has no `timeout`
+    expect(line).toContain("else sh -c 'make test'")
   })
 })
