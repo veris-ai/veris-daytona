@@ -160,8 +160,12 @@ four systems involved refused:
 - **The image needs `curl`.** The canary probe runs it; a slim image without
   it fails `create()` in the `canary` phase.
 - **Python 3.13+ needs a gateway that mints strict-verifier-safe leaves**
-  (services-sandbox#1044). Until deployed, `requests` fails with
+  (services-sandbox#1044). Without it, `requests` fails with
   `Missing Authority Key Identifier` while `curl` and Node succeed.
+- **Daytona overwrites `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` and
+  `CURL_CA_BUNDLE`** with its own CA file, which lacks the Veris CA. `run`
+  exports the Veris bundle on every command it runs; a command run through
+  `sandbox.process` yourself needs `sbx.veris.getTrustEnv()` passed as its env.
 
 ## License
 

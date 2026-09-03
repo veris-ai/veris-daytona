@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { UsageError, commandLine, formatReceipt, parseRunArgs, shellJoin, verdict } from '../../src/run'
+import { UsageError, commandEnv, commandLine, formatReceipt, parseRunArgs, shellJoin, verdict } from '../../src/run'
 import type { Receipt, ReceiptEntry } from '../../src/receipt'
 
 const entry = (name: string, requests: number): ReceiptEntry => ({
@@ -106,5 +106,17 @@ describe('commandLine', () => {
     expect(line).toContain("timeout -k 10 90 sh -c 'make test'")
     // and still runs it where the image has no `timeout`
     expect(line).toContain("else sh -c 'make test'")
+  })
+})
+
+describe('commandEnv', () => {
+  it('exports the Veris trust variables on every command, because Daytona overwrites the inherited ones', () => {
+    const env = commandEnv({ REQUESTS_CA_BUNDLE: '/tmp/veris-ca-bundle.crt', SSL_CERT_FILE: '/tmp/veris-ca-bundle.crt' }, {})
+    expect(env.REQUESTS_CA_BUNDLE).toBe('/tmp/veris-ca-bundle.crt')
+  })
+
+  it('lets --env override a trust variable, since the caller asked for it', () => {
+    const env = commandEnv({ SSL_CERT_FILE: '/tmp/veris-ca-bundle.crt' }, { SSL_CERT_FILE: '/mine.pem', A: '1' })
+    expect(env).toEqual({ SSL_CERT_FILE: '/mine.pem', A: '1' })
   })
 })

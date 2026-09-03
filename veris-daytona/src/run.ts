@@ -200,3 +200,15 @@ export function commandLine(cwd: string, env: Record<string, string>, command: s
 export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
+
+/**
+ * The environment a command runs with. Daytona overwrites SSL_CERT_FILE,
+ * REQUESTS_CA_BUNDLE and CURL_CA_BUNDLE inside the sandbox with its own CA
+ * file, which cannot verify the gateway's leaf and cannot be amended (root
+ * owned, read-only mount). So the Veris trust variables are exported on every
+ * command, where they beat the session's inherited values. The caller's --env
+ * comes last and wins.
+ */
+export function commandEnv(trust: Record<string, string>, user: Record<string, string>): Record<string, string> {
+  return { ...trust, ...user }
+}
