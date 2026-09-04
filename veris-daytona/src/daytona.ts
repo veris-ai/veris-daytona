@@ -76,6 +76,11 @@ const LABEL = {
   egress: 'veris_egress',
   ownsTwin: 'veris_owns_twin',
   canaryHost: 'veris_canary_host',
+  /** Unique to ONE create() call, and the only way back to a sandbox whose
+   *  create threw before it could hand the object over — see reapFailedCreate.
+   *  The twin id will not do: an attached twin is shared by every sandbox on
+   *  it, and deleting the wrong one of those would be worse than the leak. */
+  createId: 'veris_create_id',
 } as const
 
 const VERIS_LABEL_KEYS: readonly string[] = Object.values(LABEL)
@@ -91,6 +96,31 @@ export type VerisSandbox = Sandbox & {
 /** Is this sandbox one of ours? Narrows for callers who hold a bare Sandbox. */
 export function isVerisSandbox(sbx: Sandbox): sbx is VerisSandbox {
   return typeof (sbx as VerisSandbox).verisSandboxId === 'string'
+}
+
+/**
+ * The twin id stamped on this sandbox at create, if it has one.
+ *
+ * Read from the labels rather than from `sandbox.verisSandboxId`, so it answers
+ * for a sandbox whose Veris surface could NOT be rehydrated — no VERIS_API_KEY
+ * in the environment, say. That is exactly the case where a caller about to
+ * delete the sandbox needs telling that a twin exists and is out of reach.
+ */
+export function verisTwinId(sandbox: Sandbox): string | undefined {
+  return sandbox.labels?.[LABEL.twinId]
+}
+
+/**
+ * Does deleting this sandbox delete its twin too?
+ *
+ * True only for a twin this package created. A twin attached to with
+ * `veris.attachSandboxId` belongs to whoever made it and outlives the sandbox,
+ * and a sandbox with no twin at all has nothing to delete. This is the same
+ * label the wrapped `delete()` reads, so the two can never disagree.
+ */
+export function verisOwnsTwin(sandbox: Sandbox): boolean {
+  const labels = sandbox.labels ?? {}
+  return labels[LABEL.twinId] !== undefined && labels[LABEL.ownsTwin] !== 'false'
 }
 
 export class Daytona extends BaseDaytona {
@@ -127,6 +157,9 @@ export class Daytona extends BaseDaytona {
     const egress: EgressMode = v.egress ?? 'strict'
     const ttlMinutes = v.ttlMinutes ?? 60
     const ownsTwin = !v.attachSandboxId
+    // Stamped on the sandbox in the same request that asks for it, so this
+    // call can find what it made even when nothing was handed back.
+    const createId = crypto.randomUUID()
 
     // 1. Provision the twin first: the allowlist needs the vendor hostnames it
     //    answers for, and the egress credential is minted against it.
@@ -138,6 +171,9 @@ export class Daytona extends BaseDaytona {
     let sandbox: Sandbox
     let credential
     let watermarks: Record<string, number> = {}
+    // Everything before this line fails without Daytona having heard of us, so
+    // there is nothing out there to reap and no call worth spending on looking.
+    let daytonaAsked = false
     try {
       // 2. Mint the egress credential. Daytona accepts only http/https outbound
       //    proxies, so a control plane that offers SOCKS alone cannot be used
@@ -208,6 +244,7 @@ export class Daytona extends BaseDaytona {
           [LABEL.ownsTwin]: String(ownsTwin),
           [LABEL.mode]: 'gateway',
           [LABEL.canaryHost]: credential.canary_host,
+          [LABEL.createId]: createId,
         },
         ...network.params,
         // 3. Where Daytona forwards everything the allowlist permits. Chained,
@@ -217,11 +254,20 @@ export class Daytona extends BaseDaytona {
         ttlMinutes: rest.ttlMinutes ?? ttlMinutes,
       }
 
+      daytonaAsked = true
       sandbox = await this.baseCreate(createParams as CreateParams, options)
     } catch (cause) {
+      // Daytona has a sandbox from the moment it accepts the request, but the
+      // SDK only hands one back once it has STARTED — so an image that fails
+      // to build leaves a box behind in `build_failed` that nothing here ever
+      // held a reference to. Reap it first: it also carries the only account
+      // of what went wrong.
+      const failed = daytonaAsked
+        ? await reapFailedCreate((labels) => super.list({ labels }), createId)
+        : undefined
       await cleanupTwin()
       if (cause instanceof VerisError) throw cause
-      throw new VerisError('Daytona sandbox create failed', {
+      throw new VerisError(sandboxCreateMessage(cause, failed, rest as { image?: unknown }), {
         phase: 'sandbox-create', verisSandboxId: twin.id, cause })
     }
 
@@ -392,6 +438,114 @@ function resolveCoordinates(v: VerisOpts): ResolvedCoordinates {
     environmentId: v.environmentId ?? process.env.VERIS_ENVIRONMENT_ID,
     apiBase: (v.apiBase ?? process.env.VERIS_API_BASE ?? 'https://svc.api.veris.ai').replace(/\/$/, ''),
   }
+}
+
+/** What a create that threw left behind in Daytona, once it has been read back. */
+export interface FailedSandbox {
+  /** The DAYTONA sandbox id. Not the twin's. */
+  id: string
+  /** Daytona's own state for it — `build_failed` for an image that never built. */
+  state?: string
+  /** Daytona's account of what went wrong, when it kept one. */
+  errorReason?: string
+  /** Whether the delete actually went through. The message says either way,
+   *  because "was deleted" has to be true or it is worse than saying nothing. */
+  deleted: boolean
+}
+
+/** The parts of a Daytona Sandbox the reaper touches. */
+interface ReapableSandbox {
+  id: string
+  state?: string
+  errorReason?: string
+  labels?: Record<string, string>
+  refreshData(): Promise<void>
+  delete(): Promise<void>
+}
+
+/**
+ * Delete the half-built sandbox a failed create() left in Daytona, and bring
+ * back the reason Daytona recorded for it.
+ *
+ * The leak this exists for: `create({ image: 'only-on-my-laptop' })` builds
+ * server-side and fails at build time, so the SDK throws instead of returning
+ * a Sandbox — and a box sits in `build_failed` that nothing here can delete,
+ * until an autoDeleteInterval eventually reaps it. Found by the create id
+ * stamped in its labels, which is the one thing about it we know for certain.
+ *
+ * Best effort throughout: the create is already failing, and a reaper that
+ * threw would replace the real reason with its own.
+ */
+export async function reapFailedCreate(
+  list: (labels: Record<string, string>) => AsyncIterable<ReapableSandbox>,
+  createId: string,
+): Promise<FailedSandbox | undefined> {
+  try {
+    for await (const sandbox of list({ [LABEL.createId]: createId })) {
+      // Checked again on our side. A server-side filter that came back wider
+      // than it was asked for must not turn into a delete of someone else's
+      // sandbox — the one failure mode worse than the leak.
+      if (sandbox.labels?.[LABEL.createId] !== createId) continue
+      // The list row carries errorReason, but a row read the instant a build
+      // failed can still be without one; one more fetch settles it. A failed
+      // create is not a hot path.
+      if (!sandbox.errorReason) await sandbox.refreshData().catch(() => {})
+      const found = { id: sandbox.id, state: sandbox.state, errorReason: sandbox.errorReason }
+      return { ...found, deleted: await sandbox.delete().then(() => true, () => false) }
+    }
+  } catch {
+    // A list that cannot be read tells us nothing; the create's own error stands.
+  }
+  return undefined
+}
+
+/**
+ * What a failed create says.
+ *
+ * Two things were missing from "Daytona sandbox create failed: Sandbox 7ba4…
+ * failed to start with status: build_failed, error reason: null".
+ *
+ * The reason, first. Daytona's SDK renders `error reason: ${this.errorReason}`
+ * off the Sandbox object it was polling, and the state change that ends the
+ * wait arrives over the event stream, which carries the new state and not the
+ * reason — so the field is still the null it started as, while Daytona's own
+ * record for that sandbox says "pull access denied, repository does not
+ * exist". Reading the record back is the whole fix.
+ *
+ * And, for the failure a first-timer actually hits, whose image it is. Daytona
+ * resolves and builds it on its own machines, from a registry; the tag sitting
+ * in the laptop's Docker daemon is not something it can see.
+ *
+ * The cause's own text is folded in HERE rather than left to VerisError, whose
+ * fold would otherwise append it after the sentences that explain it.
+ */
+export function sandboxCreateMessage(
+  cause: unknown,
+  failed: FailedSandbox | undefined,
+  params: { image?: unknown } = {},
+): string {
+  const base = 'Daytona sandbox create failed'
+  // Nothing was made, so there is nothing to add: the cause is the story, and
+  // VerisError folds it in.
+  if (!failed) return base
+
+  const reason = failed.errorReason?.trim().replace(/[.\s]+$/, '')
+  const parts = [reason ? `${base}: ${reason}.` : `${base}.`]
+
+  const image = typeof params.image === 'string' ? params.image : undefined
+  if (image && failed.state === 'build_failed') {
+    parts.push(
+      `Daytona builds "${image}" on its own servers and pulls it from a registry, so an image ` +
+      'that exists only in your local Docker daemon is not one it can see.')
+  }
+  parts.push(failed.deleted
+    ? `The half-built sandbox ${failed.id} was deleted.`
+    : `The half-built sandbox ${failed.id} could not be deleted — remove it with ` +
+      `\`veris-daytona teardown ${failed.id}\`.`)
+
+  const raw = cause instanceof Error ? cause.message : ''
+  if (raw) parts.push(`(Daytona SDK: ${raw})`)
+  return parts.join(' ')
 }
 
 /**

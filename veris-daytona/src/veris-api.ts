@@ -44,6 +44,10 @@ export interface TouchMatcher {
 export interface VerisApi {
   /** The Veris twin's sandbox id — NOT the Daytona sandbox id. */
   readonly sandboxId: string
+  /** The Veris environment the twin was deployed from. Every control-plane
+   *  route that acts on a twin is scoped to it, so a caller that wants to talk
+   *  to the twin itself needs it and has nowhere else to read it from. */
+  readonly environmentId: string
   readonly mode: 'gateway'
   services(): Promise<ServiceInfo[]>
   /** The service's own manual: what it models and how its data is shaped. */
@@ -73,6 +77,7 @@ export class VerisApiImpl implements VerisApi {
   constructor(private readonly ctx: VerisContext) {}
 
   get sandboxId(): string { return this.ctx.twinId }
+  get environmentId(): string { return this.ctx.environmentId }
   get mode(): 'gateway' { return 'gateway' }
 
   services(): Promise<ServiceInfo[]> {
