@@ -17,6 +17,17 @@ And every run ends with a **receipt** of what the vendor actually received.
 Each has its own README with installation and usage. This page is about how they
 work and how to develop them.
 
+`@veris-ai/daytona` also installs a `veris-daytona` executable, and it has three
+verbs. `run` does the whole job in one command — box up, code in, suite run,
+receipt read, everything down. `provision` and `teardown` are that job split at
+the seam: provision wires a box on a twin you already have and stops there, and
+whoever called it installs the dependencies, runs the suite and decides what the
+receipt proved. The Veris-shaped half is identical either way and belongs here —
+the egress credential, the 20-domain allowlist, the outbound proxy, the CA
+bundle, the canary, the trust variables. The "did this run prove anything" half
+belongs to the `veris` CLI, which already owns what a receipt means, what
+`--require-service` means and what the exit codes mean.
+
 ## How it works
 
 Every sandbox is created with two Daytona parameters:
@@ -75,7 +86,9 @@ sandbox where `curl`, Node and `requests` all succeed. `sbx.veris
 .patchBundledCas()` appends the Veris CA to the known ones (certifi, pip's
 vendored certifi, botocore, stripe, httplib2) — the Daytona-shaped version of
 the veris CLI's `--patch-bundled-cas`. Run it after installing dependencies;
-`veris-daytona run` does.
+`veris-daytona run` does. Every sandbox also carries the same patcher as a
+script at `/tmp/veris-patch-bundled-cas.sh`, which is how a `provision`ed box
+gets patched by whoever installed the dependencies in it.
 
 **On `socks_address`.** The egress credential also carries a SOCKS endpoint,
 which is what `@veris-ai/e2b` uses. Daytona cannot: it accepts only

@@ -1,34 +1,83 @@
-// The `veris-daytona` executable. Today it has one verb, `run` — see run.ts
-// for the flags and the verdict; this file is the part that talks to Daytona
-// and the control plane.
+// The `veris-daytona` executable. Three verbs — `run` (run.ts), `provision`
+// (provision.ts) and `teardown` (teardown.ts) — whose flags and pure logic live
+// in a module each; this file is the part that talks to Daytona and the control
+// plane.
+//
+// `run` does the whole job in one command. `provision` and `teardown` are the
+// same job split at the seam: provision wires a sandbox and stops, and whoever
+// called it uploads code, runs a suite and decides what the receipt proved.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { Daytona, isVerisSandbox } from './daytona'
+import { DaytonaNotFoundError } from '@daytona/sdk'
+import type { Sandbox } from '@daytona/sdk'
+import { Daytona, isVerisSandbox, verisOwnsTwin, verisTwinId } from './daytona'
 import type { VerisSandbox } from './daytona'
 import { VerisError } from './errors'
 import {
-  TIMED_OUT_EXIT, UPLOAD_EXCLUDES, USAGE, UsageError, commandEnv, commandLine, formatReceipt, parseRunArgs, verdict,
+  TIMED_OUT_EXIT, UPLOAD_EXCLUDES, USAGE, UsageError, commandEnv, commandLine, formatReceipt,
+  parseRunArgs, shellQuote, verdict,
 } from './run'
 import type { RunOptions } from './run'
+import {
+  AUTO_DELETE_MINUTES, AUTO_STOP_MINUTES, PROVISION_TTL_MINUTES, PROVISION_USAGE,
+  parseProvisionArgs, provisionJson, provisionResult,
+} from './provision'
+import type { ProvisionOptions } from './provision'
+import { TEARDOWN_USAGE, parseTeardownArgs } from './teardown'
+import type { TeardownOptions } from './teardown'
 import { SDK_VERSION } from './version'
 
 const out = (msg: string) => process.stdout.write(msg + '\n')
 const say = (msg: string) => process.stderr.write(`\x1b[1m» ${msg}\x1b[0m\n`)
 const note = (msg: string) => process.stderr.write(`  \x1b[2m${msg}\x1b[0m\n`)
 
+const ROOT_USAGE = `usage: veris-daytona <command> [options]
+
+  run         run a command in a wired sandbox, print the receipt, delete everything
+  provision   create a wired sandbox on an existing twin, print its JSON, and stop
+  teardown    delete a sandbox that provision (or run --keep) left behind
+
+veris-daytona <command> --help describes each one.`
+
+/** Every text that IS the help, rather than a complaint ending in it. */
+const HELP_TEXTS: readonly string[] = [ROOT_USAGE, USAGE, PROVISION_USAGE, TEARDOWN_USAGE]
+
 export async function main(argv: readonly string[]): Promise<number> {
   const [verb, ...rest] = argv
   if (verb === '--version' || verb === '-v') { out(SDK_VERSION); return 0 }
-  if (verb !== 'run') { process.stderr.write(USAGE + '\n'); return verb === undefined || verb === '--help' || verb === '-h' ? 0 : 2 }
 
-  let opts: RunOptions
-  try {
-    opts = parseRunArgs(rest)
-  } catch (e) {
-    if (e instanceof UsageError) { process.stderr.write(e.message + '\n'); return e.message === USAGE ? 0 : 2 }
-    throw e
+  switch (verb) {
+    case 'run': {
+      const opts = parseOrExit(() => parseRunArgs(rest))
+      return typeof opts === 'number' ? opts : run(opts)
+    }
+    case 'provision': {
+      const opts = parseOrExit(() => parseProvisionArgs(rest))
+      return typeof opts === 'number' ? opts : provision(opts)
+    }
+    case 'teardown': {
+      const opts = parseOrExit(() => parseTeardownArgs(rest))
+      return typeof opts === 'number' ? opts : teardown(opts)
+    }
+    default:
+      process.stderr.write(ROOT_USAGE + '\n')
+      return verb === undefined || verb === '--help' || verb === '-h' ? 0 : 2
   }
-  return run(opts)
+}
+
+/**
+ * Parse one verb's argv, or the exit code the failure deserves: 0 when the
+ * caller asked for help, 2 when they got the flags wrong. Options objects are
+ * never numbers, so the caller narrows on `typeof`.
+ */
+function parseOrExit<T extends object>(parse: () => T): T | number {
+  try {
+    return parse()
+  } catch (e) {
+    if (!(e instanceof UsageError)) throw e
+    process.stderr.write(e.message + '\n')
+    return HELP_TEXTS.includes(e.message) ? 0 : 2
+  }
 }
 
 async function run(opts: RunOptions): Promise<number> {
@@ -40,11 +89,18 @@ async function run(opts: RunOptions): Promise<number> {
   // Only the twin's own TTL backstop; the sandbox is deleted at the end regardless.
   const ttlMinutes = Math.ceil(opts.timeoutSeconds / 60) + 30
 
-  say('Creating the Daytona sandbox and its Veris twin')
+  say(opts.sandbox ? `Creating the Daytona sandbox on twin ${opts.sandbox}` : 'Creating the Daytona sandbox and its Veris twin')
   const daytona = new Daytona({ apiKey: daytonaKey })
   const created = await daytona.create({
     ...(opts.image ? { image: opts.image } : {}),
     ...(opts.snapshot ? { snapshot: opts.snapshot } : {}),
+    // A run deletes its own sandbox, so these two only ever matter when it
+    // could not: --keep, a crash, a machine that went away mid-run. Daytona's
+    // own auto-stop default is 15 minutes and auto-delete is off entirely, so
+    // saying them out loud is the difference between a stranded box costing an
+    // hour and costing until someone notices.
+    autoStopInterval: AUTO_STOP_MINUTES,
+    autoDeleteInterval: AUTO_DELETE_MINUTES,
     veris: {
       environmentId: opts.environment,
       attachSandboxId: opts.sandbox,
@@ -59,8 +115,8 @@ async function run(opts: RunOptions): Promise<number> {
 
   let code = 2
   try {
-    const root = (await sandbox.getWorkDir()) ?? (await sandbox.getUserRootDir()) ?? '/home/daytona'
-    const work = `${root.replace(/\/$/, '')}/veris-run`
+    const root = await sandboxRoot(sandbox)
+    const work = `${root}/veris-run`
 
     if (opts.repo) {
       say(`Cloning ${opts.repo}${opts.ref ? ` (${opts.ref})` : ''}`)
@@ -113,16 +169,154 @@ async function run(opts: RunOptions): Promise<number> {
     code = v.exitCode
     return code
   } finally {
+    // What actually happens depends on who owns the twin, and saying otherwise
+    // is not a cosmetic slip: an attach run used to announce "Deleting the
+    // sandbox and twin" while deleting only the sandbox, which is a line that
+    // would make anyone stop looking for a twin that is still there.
+    const owns = verisOwnsTwin(sandbox)
     if (opts.keep) {
-      say('Keeping the sandbox and twin (--keep)')
+      say(owns ? 'Keeping the sandbox and twin (--keep)' : 'Keeping the sandbox (--keep); the twin was already yours')
       note(`VERIS_SANDBOX_ID=${sandbox.verisSandboxId}`)
       note(`daytona sandbox: ${sandbox.id}`)
-      note(`delete both with: daytona delete ${sandbox.id}   # the twin goes with it only via the SDK; also DELETE it in Veris`)
+      note(owns
+        ? `delete both with: veris-daytona teardown ${sandbox.id}`
+        : `delete the sandbox with: veris-daytona teardown ${sandbox.id}   # your twin is left alone`)
     } else {
-      say('Deleting the sandbox and twin')
+      say(owns ? 'Deleting the sandbox and twin' : `Deleting the sandbox; twin ${sandbox.verisSandboxId} is yours and is left running`)
       await sandbox.delete().catch((e) => process.stderr.write(`  cleanup failed: ${e}\n`))
     }
   }
+}
+
+/**
+ * Create a wired sandbox on an existing twin and stop there, printing one JSON
+ * object on stdout for whoever drives it next.
+ *
+ * Everything up to and including "the box is trusted" happens inside create():
+ * the egress credential, the allowlist, the outbound proxy, the CA bundle, the
+ * canary probe and the trust variables. What is deliberately absent is the rest
+ * of `run` — no upload, no setup, no command, no receipt, and above all no
+ * delete.
+ */
+async function provision(opts: ProvisionOptions): Promise<number> {
+  const daytonaKey = process.env.DAYTONA_API_KEY
+  if (!daytonaKey) {
+    process.stderr.write('DAYTONA_API_KEY is not set. Get one at https://app.daytona.io/dashboard/keys\n')
+    return 2
+  }
+  // Read before create, so the printed expiry is never later than the truth:
+  // Daytona counts the TTL from the moment the sandbox exists, which is after
+  // this line, not before it.
+  const createdAt = Date.now()
+
+  say(`Creating the Daytona sandbox on twin ${opts.sandbox}`)
+  const created = await new Daytona({ apiKey: daytonaKey }).create({
+    ...(opts.image ? { image: opts.image } : {}),
+    ...(opts.snapshot ? { snapshot: opts.snapshot } : {}),
+    // The only place a caller's --env can land: there is no command here to
+    // export it in front of, so it is set on the sandbox and every command run
+    // in there inherits it. Veris-managed variables still win — see create().
+    ...(Object.keys(opts.env).length ? { envVars: opts.env } : {}),
+    // Load-bearing here in a way they are not in `run`: nothing deletes this
+    // box afterwards, so these are what stop an abandoned one from billing.
+    autoStopInterval: AUTO_STOP_MINUTES,
+    autoDeleteInterval: AUTO_DELETE_MINUTES,
+    veris: {
+      attachSandboxId: opts.sandbox,
+      allowOut: opts.allowOut,
+      // The Daytona box's wall-clock backstop. It does not move the twin's own
+      // TTL: an attached twin is never created here, so its life was already
+      // decided by whoever made it.
+      ttlMinutes: PROVISION_TTL_MINUTES,
+    },
+  } as Parameters<Daytona['create']>[0], { timeout: 300 })
+  if (!isVerisSandbox(created)) throw new VerisError('create() returned a sandbox with no Veris surface')
+  const sandbox: VerisSandbox = created
+  note(`Daytona sandbox ${sandbox.id}`)
+  note(`Veris twin      ${sandbox.verisSandboxId}`)
+
+  // The caller has to put code somewhere, and a directory that already exists
+  // is one fewer thing for them to get right. Made here rather than named and
+  // left absent, because `cd` into it is the first thing they will do.
+  const work = `${await sandboxRoot(sandbox)}/veris-run`
+  const mkdir = await sandbox.process.executeCommand(`mkdir -p ${shellQuote(work)}`, undefined, undefined, 60)
+  if (mkdir.exitCode !== 0) throw new VerisError(`could not create ${work} in the sandbox: ${mkdir.result}`)
+
+  const services = await sandbox.veris.services()
+  say('Ready. The sandbox is up, trusted, and running nothing')
+  note(`delete it with: veris-daytona teardown ${sandbox.id}`)
+
+  out(provisionJson(provisionResult({
+    daytonaSandboxId: sandbox.id,
+    verisSandboxId: sandbox.verisSandboxId,
+    verisEnvironmentId: sandbox.veris.environmentId,
+    workDir: work,
+    trustEnv: sandbox.veris.getTrustEnv(),
+    services: services.map((s) => s.name),
+    // Daytona's own answer where it gives one: it is the authority on when the
+    // box dies, and the local sum can only estimate the moment it began.
+    expiresAt: sandbox.autoDestroyAt ?? new Date(createdAt + PROVISION_TTL_MINUTES * 60_000).toISOString(),
+  })))
+  return 0
+}
+
+/**
+ * Delete one Daytona sandbox, and say what happened to its twin.
+ *
+ * The twin decision is not made here. `sandbox.delete()` already deletes a twin
+ * this package created and leaves an attached one alone; teardown reads the
+ * same label so that the sentence it prints and the action it takes come from
+ * one fact rather than two.
+ */
+async function teardown(opts: TeardownOptions): Promise<number> {
+  const daytonaKey = process.env.DAYTONA_API_KEY
+  if (!daytonaKey) {
+    process.stderr.write('DAYTONA_API_KEY is not set. Get one at https://app.daytona.io/dashboard/keys\n')
+    return 2
+  }
+
+  let sandbox: Sandbox
+  try {
+    sandbox = await new Daytona({ apiKey: daytonaKey }).get(opts.sandboxId)
+  } catch (e) {
+    if (!(e instanceof DaytonaNotFoundError)) throw e
+    // Said in full, because the obvious worry on reading this is the other
+    // resource: a twin bills on its own and nothing here has been near it.
+    process.stderr.write(
+      `no Daytona sandbox '${opts.sandboxId}' — already deleted, or it belongs to another ` +
+      `organization than this DAYTONA_API_KEY. No Veris twin was touched.\n`)
+    return 1
+  }
+
+  const twinId = verisTwinId(sandbox)
+  const owns = verisOwnsTwin(sandbox)
+  if (owns && !isVerisSandbox(sandbox)) {
+    // The labels say this sandbox owns a twin, and the Veris surface could not
+    // be rehydrated — in practice, VERIS_API_KEY is unset. Deleting now would
+    // strand the twin silently, so refuse and name the key. An ATTACHED twin
+    // needs no key at all, which is why this asks about ownership and not
+    // merely about a twin existing.
+    process.stderr.write(
+      `sandbox ${sandbox.id} owns Veris twin ${twinId} and VERIS_API_KEY is not set, so the twin ` +
+      `cannot be deleted. Set it and run this again, or the twin outlives the sandbox until its ` +
+      `TTL. Nothing was deleted.\n`)
+    return 2
+  }
+
+  say(owns
+    ? `Deleting the sandbox and twin ${twinId}`
+    : twinId
+      ? `Deleting the sandbox; twin ${twinId} is yours and is left running`
+      : 'Deleting the sandbox (it has no Veris twin)')
+  await sandbox.delete()
+  note(`deleted ${sandbox.id}`)
+  return 0
+}
+
+/** The sandbox's home, with no trailing slash — where both verbs put code. */
+async function sandboxRoot(sandbox: Sandbox): Promise<string> {
+  const root = (await sandbox.getWorkDir()) ?? (await sandbox.getUserRootDir()) ?? '/home/daytona'
+  return root.replace(/\/$/, '')
 }
 
 /** tar the current directory into memory, minus what gets rebuilt inside. */

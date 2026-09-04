@@ -30,7 +30,7 @@ export * from '@daytona/sdk'
 // above, which is the whole trick that makes the plugin fork a one-line diff.
 export { Daytona, default } from './daytona'
 export type { VerisOpts, VerisDaytonaConfig, VerisSandbox } from './daytona'
-export { isVerisSandbox } from './daytona'
+export { isVerisSandbox, verisOwnsTwin, verisTwinId } from './daytona'
 
 export type { VerisApi, TouchMatcher, DeliverToOpts, VerisContext } from './veris-api'
 export type { Receipt, ReceiptEntry, ReceiptRequest, ReceiptLeak } from './receipt'
