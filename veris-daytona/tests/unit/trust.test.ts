@@ -116,6 +116,28 @@ describe('bundledCaPatchScript', () => {
   })
 
   it('reports each file it changed, so the caller can say what happened', () => {
-    expect(bundledCaPatchScript()).toContain(`echo "${BUNDLED_CA_PATCHED_MARKER} $f"`)
+    expect(bundledCaPatchScript()).toContain(`echo "${BUNDLED_CA_PATCHED_MARKER}$f"`)
+  })
+
+  it('prints a sentence, not a machine marker, because a person runs this script', () => {
+    // `provision` hands out `sh /tmp/veris-patch-bundled-cas.sh` and whatever
+    // it prints is what that caller sees. A bare __VERIS_PATCHED__ /path read
+    // as debug output that escaped, while `run` — parsing the same lines —
+    // showed prose. One act should not look like two.
+    expect(BUNDLED_CA_PATCHED_MARKER).not.toMatch(/^__/)
+    expect(BUNDLED_CA_PATCHED_MARKER).toMatch(/ $/)
+  })
+
+  it('says so when it patched nothing, since silence reads as "did it run?"', () => {
+    const script = bundledCaPatchScript()
+    expect(script).toContain('if [ "$n" -gt 0 ]; then echo "$n bundled CA file(s) patched"')
+    expect(script).toContain('no bundled CA file needed patching')
+  })
+
+  it('counts inside the pipeline`s own subshell, or the count never survives', () => {
+    // A pipeline's last stage runs in a subshell: `n` incremented in a bare
+    // `while` after a pipe is gone by the time the summary would read it, so
+    // the loop and the summary share one brace group.
+    expect(bundledCaPatchScript()).toContain('| sort -u | { n=0')
   })
 })

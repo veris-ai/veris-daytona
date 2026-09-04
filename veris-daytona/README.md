@@ -80,7 +80,7 @@ Veris receipt — twin sbx_a1b2c3
 
 `veris-daytona run --help` lists everything.
 
-### Or hand the wired box to something else: `provision` and `teardown`
+### Or hand the wired box to something else: `provision`, `push`, `exec`, `teardown`
 
 `run` does the whole job in one command, and it stays. But when the thing that
 installs the dependencies and runs the suite is another tool — the `veris` CLI,
@@ -107,6 +107,8 @@ goes to stdout and every human line to stderr, so `$box` is parseable:
   "trustEnv": { "SSL_CERT_FILE": "/tmp/veris-ca-bundle.crt", "…": "…" },
   "trustPrelude": "export SSL_CERT_FILE='/tmp/veris-ca-bundle.crt'; …",
   "patchBundledCasCommand": "sh /tmp/veris-patch-bundled-cas.sh",
+  "pushCommand": "veris-daytona push e2a1…",
+  "execCommand": "veris-daytona exec e2a1… -- <command>",
   "services": ["stripe", "github"],
   "expiresAt": "2026-09-04T12:00:00.000Z",
   "autoStopMinutes": 30,
@@ -121,14 +123,52 @@ goes to stdout and every human line to stderr, so `$box` is parseable:
 | `--allow-out <host>` | extra hostname the sandbox may reach, repeatable |
 | `--env KEY=VALUE` | set as a sandbox environment variable, repeatable |
 
-From there the box is yours: put your code in `workDir`, export `trustEnv` on
-every command you run in it, and once the dependencies are installed run
-`patchBundledCasCommand` **inside the box** — the script is already in there, so
-a shell caller needs nothing from this package to patch the CA bundles an SDK
-ships with it. Reading the receipt and deciding what it proved is the caller's
-job too; that is the whole point of the split.
+Daytona's allowlist is fixed at create, so a later `push --repo` needs
+`--allow-out github.com` said here.
 
-Then, however it went:
+From there the box is yours. Reading the receipt and deciding what it proved is
+the caller's job; that is the whole point of the split.
+
+### Getting code in and running it: `push` and `exec`
+
+Daytona has no route into a box that already exists. Their CLI (v0.210.0) has no
+upload, copy or sync command; `daytona ssh` takes exactly one argument, so there
+is no `tar | ssh` and no scp or rsync behind it; `--context` is a Docker build
+context that only exists on `create`, which `provision` owns; and `git clone`
+inside the box needs the git host on an allowlist fixed at create. So two verbs
+do it:
+
+```sh
+id=$(echo "$box" | jq -r .daytonaSandboxId)
+
+npx @veris-ai/daytona push "$id"                       # tars the cwd into workDir
+npx @veris-ai/daytona exec "$id" -- pip install -e .
+npx @veris-ai/daytona exec "$id" -- sh /tmp/veris-patch-bundled-cas.sh
+npx @veris-ai/daytona exec "$id" -- python -m pytest tests/integration
+```
+
+`push` uploads the current directory, minus what gets rebuilt inside
+(`node_modules`, `.venv`, `dist`, `__pycache__`, …), and unpacks it in the same
+`workDir` the JSON named — so the two chain without carrying the path between
+them. `--repo <url> --ref <branch>` clones instead, using `GITHUB_TOKEN` for a
+private one.
+
+`exec` runs one command with `trustEnv` already exported, which is the part that
+matters: `daytona exec` has no `--env` flag at all, so a command run through it
+inherits Daytona's own CA file and fails on the gateway's certificate unless you
+retype the trust prelude every single time. It streams output as it happens
+rather than returning at the end, takes `--cwd`, repeatable `--env KEY=VALUE`
+and `--timeout <seconds>`, and exits with the command's own status.
+
+Neither reads a receipt or passes a verdict — take a watermark before and read
+`veris sandbox trace --since` after. And once the dependencies are installed,
+run `patchBundledCasCommand` **inside the box** to patch the CA bundles an SDK
+ships with it; the script is already in there, so a shell caller needs nothing
+from this package.
+
+### Taking it back: `teardown`
+
+However it went:
 
 ```sh
 npx @veris-ai/daytona teardown "$(echo "$box" | jq -r .daytonaSandboxId)"

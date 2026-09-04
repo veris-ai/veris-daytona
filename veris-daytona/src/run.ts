@@ -183,6 +183,16 @@ export function formatReceipt(receipt: Receipt, twinId: string): string {
   return lines.join('\n')
 }
 
+/**
+ * The directory under the sandbox's own home that every verb puts code in.
+ *
+ * One name shared by four verbs on purpose: `provision` prints it as workDir,
+ * `push` unpacks into it, `exec` runs in it by default, and `run` does all
+ * three. A caller chaining provision → push → exec never has to carry the path
+ * between the commands, and cannot get it wrong.
+ */
+export const WORK_SUBDIR = 'veris-run'
+
 /** Directories never worth shipping: rebuilt inside the sandbox, or not source. */
 export const UPLOAD_EXCLUDES: readonly string[] = [
   '.git', 'node_modules', '.venv', 'venv', '__pycache__', '.pytest_cache', '.mypy_cache',
