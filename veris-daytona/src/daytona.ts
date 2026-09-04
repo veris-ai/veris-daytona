@@ -21,11 +21,12 @@ import type {
   Sandbox,
 } from '@daytona/sdk'
 import { ControlPlane } from './control-plane'
-import type { TwinSandbox } from './control-plane'
+import type { ServiceInfo, TwinSandbox } from './control-plane'
 import { VerisApiImpl } from './veris-api'
 import type { VerisApi, VerisContext } from './veris-api'
-import { buildNetwork, dataPlaneEnv } from './network'
+import { DAYTONA_DOMAIN_LIMIT, buildNetwork, dataPlaneEnv, isHttpUrl } from './network'
 import type { EgressMode } from './network'
+import { fetchWatermark } from './receipt'
 import { CA_CERT_PATH, nodeOptionsWithTrust, sanitizeTrustEnv } from './trust'
 import { gatewayProxyUrl, installCa, probeCanary } from './gateway'
 import { MissingCredentialsError, VerisError, VerisGatewayNotOfferedError } from './errors'
@@ -136,6 +137,7 @@ export class Daytona extends BaseDaytona {
 
     let sandbox: Sandbox
     let credential
+    let watermarks: Record<string, number> = {}
     try {
       // 2. Mint the egress credential. Daytona accepts only http/https outbound
       //    proxies, so a control plane that offers SOCKS alone cannot be used
@@ -165,6 +167,21 @@ export class Daytona extends BaseDaytona {
         gatewayHosts: [new URL(proxyUrl).hostname, credential.canary_host].filter(Boolean),
         allowOut: v.allowOut, allowRegistries: v.allowRegistries,
       })
+      if (network.droppedRegistries.length) {
+        // Said out loud, because the failure it causes lands much later and
+        // blames the wrong thing: a `cargo build` that cannot reach crates.io
+        // reads as a broken sandbox rather than as an allowlist that was full.
+        process.stderr.write(
+          `veris: Daytona allows ${DAYTONA_DOMAIN_LIMIT} domains and this twin's own hosts take ` +
+          `most of them, so these registries were left off: ` +
+          `${network.droppedRegistries.join(', ')}. Name the ones you need in veris.allowOut, ` +
+          `or set veris.allowRegistries: false to spend every remaining slot yourself.\n`)
+      }
+
+      // Where each service's log stands BEFORE anything can have run in the
+      // sandbox: the receipt counts from here, so an attached twin's earlier
+      // traffic is not credited to this run.
+      watermarks = await readWatermarks(services)
 
       // Veris-managed vars WIN over caller envs: a caller value for a
       // data-plane env_hint (e.g. DATABASE_URL) would silently point the code
@@ -192,7 +209,7 @@ export class Daytona extends BaseDaytona {
           [LABEL.mode]: 'gateway',
           [LABEL.canaryHost]: credential.canary_host,
         },
-        ...network,
+        ...network.params,
         // 3. Where Daytona forwards everything the allowlist permits. Chained,
         //    not advisory: an unreachable gateway makes allowed traffic 502
         //    rather than quietly going direct.
@@ -221,7 +238,7 @@ export class Daytona extends BaseDaytona {
 
     return this.attach(sandbox, {
       controlPlane, environmentId: twin.environment_id, twinId: twin.id,
-      egress, ownsTwin, canaryHost: credential.canary_host,
+      egress, ownsTwin, canaryHost: credential.canary_host, watermarks,
     })
   }
 
@@ -375,6 +392,21 @@ function resolveCoordinates(v: VerisOpts): ResolvedCoordinates {
     environmentId: v.environmentId ?? process.env.VERIS_ENVIRONMENT_ID,
     apiBase: (v.apiBase ?? process.env.VERIS_API_BASE ?? 'https://svc.api.veris.ai').replace(/\/$/, ''),
   }
+}
+
+/**
+ * Each service's newest request id right now, keyed by service name.
+ *
+ * Best-effort per service, on purpose: a mark that cannot be read falls back
+ * to 0, which reads the whole log — the behaviour the receipt had before
+ * watermarks existed. A twin whose log is briefly unreadable must not be a
+ * failed create().
+ */
+async function readWatermarks(services: ServiceInfo[]): Promise<Record<string, number>> {
+  const marks = await Promise.all(
+    services.filter((s) => isHttpUrl(s.control_url)).map(async (svc) =>
+      [svc.name, await fetchWatermark(svc).catch(() => 0)] as const))
+  return Object.fromEntries(marks)
 }
 
 function stripVeris(params: CreateParams | undefined): Omit<CreateParams, 'veris'> {

@@ -54,10 +54,16 @@ export interface EgressCredential {
   trust_env?: Record<string, string>
 }
 
-/** Mutable fields of a running twin. An OMITTED key is left alone; an explicit
- *  null is a value (client_base_url: null unregisters). */
+/**
+ * Mutable fields of a running twin. An OMITTED key is left alone; an explicit
+ * null is a value (client_base_url: null unregisters).
+ *
+ * There is deliberately no ttl_minutes. The server's UpdateSandboxRequest
+ * declares client_base_url and nothing else, and pydantic ignores unknown
+ * fields rather than refusing them — so a PATCH carrying a TTL answers 200 and
+ * changes nothing. See the note where extendTtl used to be.
+ */
 export interface SandboxPatch {
-  ttl_minutes?: number
   client_base_url?: string | null
 }
 
@@ -201,16 +207,19 @@ export class ControlPlane {
     if (!res.ok) await this.json(res, `update sandbox ${sandboxId}`)
   }
 
-  /** Extend a twin's TTL so it stays in lockstep with an extended Daytona sandbox. */
-  async extendTtl(environmentId: string, sandboxId: string, ttlMinutes: number): Promise<void> {
-    const res = await this.request('PATCH', `/v1/environments/${environmentId}/sandboxes/${sandboxId}`, { ttl_minutes: ttlMinutes })
-    if (res.status === 404) {
-      throw new TwinExpiredError(`Veris sandbox ${sandboxId} not found — cannot extend TTL`, { verisSandboxId: sandboxId })
-    }
-    // 405 = a control plane that does not accept this field yet: tolerated, the
-    // original TTL keeps its backstop role and kill() still cleans up.
-    if (!res.ok && res.status !== 405) await this.json(res, `extend TTL of ${sandboxId}`)
-  }
+  // There was an extendTtl() here, and it did nothing.
+  //
+  // It PATCHed { ttl_minutes } at the sandbox resource, and the server's
+  // UpdateSandboxRequest declares only client_base_url. Pydantic ignores
+  // unknown fields, so the route answered 200 having changed no TTL at all —
+  // a call that reports success while doing nothing, which is worse than no
+  // call, because the caller then believes the twin will outlive the run.
+  // Nothing here called it; it was API surface promising a thing that could
+  // not happen.
+  //
+  // Bring it back when a route exists to carry it. Until then a twin's TTL is
+  // decided once, by ttl_minutes at create — where this SDK already keeps it
+  // in step with the Daytona sandbox's own ttlMinutes.
 
   /** Create-time preflight: is the gateway infrastructure up, per the control plane? */
   async gatewayHealth(): Promise<void> {

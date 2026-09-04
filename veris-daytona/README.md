@@ -97,11 +97,41 @@ when it is empty.
 | `services()` | what the twin answers for, and where |
 | `manual(service)` | that service's manual: what it models, how its data is shaped |
 | `getDataPlaneEnv()` | `{ DATABASE_URL: … }` for non-HTTP twin services |
-| `getTrustEnv()` | the CA variables injected into the sandbox |
+| `getTrustEnv()` | the CA variables, as a map for a process you start |
+| `trustPrelude()` | the same variables, as one line of shell `export`s |
+| `patchBundledCas()` | append the Veris CA to the CA bundles your SDKs ship |
 | `deliverTo(port \| url)` | point vendor webhooks back at your sandbox |
 
 `sbx.verisSandboxId` is the twin's id — not to be confused with `sbx.id`, which
 is Daytona's.
+
+### Trust, for a command you run yourself
+
+Daytona overwrites `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` and
+`NODE_EXTRA_CA_CERTS` inside the sandbox with its own CA file, which cannot
+verify the gateway's certificates. Anything not started with the right values
+inherits the broken ones — `uv sync` dies with `invalid peer certificate:
+UnknownIssuer`. Two shapes, because callers come in two shapes:
+
+```ts
+// You control the process's environment:
+await sbx.process.executeCommand('uv sync', cwd, sbx.veris.getTrustEnv())
+
+// You can only prefix a command line (a session, someone else's runner):
+await sbx.process.executeCommand(`${sbx.veris.trustPrelude()} uv sync`)
+```
+
+And for an SDK that reads no variable because it ships its own CA file — the
+measured case is stripe-python's `verify=stripe.ca_bundle_path`:
+
+```ts
+await sbx.process.executeCommand('pip install -e .', cwd, sbx.veris.getTrustEnv())
+console.log(await sbx.veris.patchBundledCas())   // ['…/stripe/data/ca-certificates.crt', …]
+```
+
+Call it *after* installing dependencies — the bundles arrive with them. It is
+idempotent and returns only the files it changed. `veris-daytona run` calls it
+for you, between `--setup` and the command.
 
 ## Options
 
@@ -135,6 +165,11 @@ anything not allowlisted and forwards the rest to the gateway, which answers
 vendor hostnames from the twin. Nothing of ours runs inside the sandbox, which
 is why any image works.
 
+The list also carries the twin's own host when a service can only be reached
+there — one with no vendor routes has no hostname for the gateway to intercept,
+so its twin URL is the only way in. Daytona caps the whole list at 20 domains,
+which a large environment fills; see the Limitations for what gives way.
+
 Before `create()` resolves, a canary probe dials a reserved hostname only the
 gateway answers, whose body carries the twin id. It proves in one request that
 egress is tunnelled, that the credential reached the right twin, and that trust
@@ -165,7 +200,19 @@ four systems involved refused:
 - **Daytona overwrites `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` and
   `CURL_CA_BUNDLE`** with its own CA file, which lacks the Veris CA. `run`
   exports the Veris bundle on every command it runs; a command run through
-  `sandbox.process` yourself needs `sbx.veris.getTrustEnv()` passed as its env.
+  `sandbox.process` yourself needs `sbx.veris.getTrustEnv()` as its env, or
+  `sbx.veris.trustPrelude()` in front of the command line.
+- **An SDK that bundles its own CA reads no variable at all.**
+  `sbx.veris.patchBundledCas()` covers certifi, pip's vendored certifi,
+  botocore, stripe and httplib2; anything else fails with its own error naming
+  the file to add.
+- **Daytona allows 20 domains, and a large environment fills the list.** The
+  vendor hostnames, the gateway, the data planes and your `allowOut` are kept;
+  the default registries are trimmed from the tail to fit, and what was dropped
+  is printed. Required hosts alone exceeding 20 fails at `sandbox-create` with
+  the count and the knobs, rather than as a raw Daytona refusal.
+- **A very long run's receipt is a floor.** The twin's log is read in pages up
+  to a budget; past it, `entry.capped` is true and `run` prints `≥N`.
 
 ## License
 

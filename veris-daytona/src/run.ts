@@ -158,15 +158,23 @@ export function verdict(commandExitCode: number, receipt: Receipt, requireServic
   return { exitCode: problems.length ? 1 : 0, problems }
 }
 
-/** The receipt as the human sees it. */
+/**
+ * The receipt as the human sees it.
+ *
+ * A count the read could not finish prints as "≥N", per service and in the
+ * total. The twin's log is read in pages, so a very long run can end at the
+ * page budget, and printing that floor as if it were the count would be a
+ * wrong number stated confidently — the one thing a receipt must never be.
+ */
 export function formatReceipt(receipt: Receipt, twinId: string): string {
   const lines = [`Veris receipt — twin ${twinId}`, `  interception: ${receipt.mode}   integrity: ${receipt.integrity}`]
   if (receipt.leaks.length) lines.push(`  blind spots: ${receipt.leaks.join(', ')}`)
   const entries = Object.entries(receipt.services)
   const total = entries.reduce((n, [, e]) => n + (e?.requests ?? 0), 0)
-  lines.push('', `${total} request(s) reached the twin:`)
+  const floor = (capped: boolean | undefined) => (capped ? '≥' : '')
+  lines.push('', `${floor(entries.some(([, e]) => e?.capped))}${total} request(s) reached the twin:`)
   for (const [name, entry] of entries) {
-    lines.push(`  ${name}: ${entry?.requests ?? 0} request(s)`)
+    lines.push(`  ${name}: ${floor(entry?.capped)}${entry?.requests ?? 0} request(s)`)
     for (const r of (entry?.entries ?? []).slice(0, 20)) {
       lines.push(`    ${r.method} ${r.path} -> ${r.status ?? 'no response'}`)
     }

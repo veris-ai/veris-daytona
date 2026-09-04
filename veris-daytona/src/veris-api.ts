@@ -8,9 +8,9 @@ import type { Receipt, ReceiptEntry, ReceiptLeak } from './receipt'
 import { VerisUntouchedError, VerisError } from './errors'
 import { dataPlaneEnv, isHttpUrl } from './network'
 import type { EgressMode } from './network'
-import { probeCanary } from './gateway'
+import { patchBundledCas, probeCanary } from './gateway'
 import { fetchManual } from './state'
-import { vendoredTrustEnv } from './trust'
+import { trustPrelude, vendoredTrustEnv } from './trust'
 
 /** Everything needed to answer Veris queries about a live sandbox. */
 export interface VerisContext {
@@ -23,6 +23,13 @@ export interface VerisContext {
   canaryHost: string
   /** Whether this twin is owned (delete removes it) or attached (caller owns it). */
   ownsTwin: boolean
+  /** Newest request id per service when this run began, so a receipt counts
+   *  what the run caused rather than what an attached twin already held. Set by
+   *  create(); a sandbox rehydrated by get() has none and reads the log from
+   *  the start, as the receipt always did. Not persisted in a label on
+   *  purpose — the sandbox can rewrite its own labels, and a watermark it
+   *  chose would let it hide its own traffic from the receipt. */
+  watermarks?: Record<string, number>
 }
 
 /** Narrow assertTouched to specific requests. All fields AND together. */
@@ -46,6 +53,12 @@ export interface VerisApi {
   assertTouched(service: string, match?: TouchMatcher): Promise<void>
   getDataPlaneEnv(): Promise<Record<string, string>>
   getTrustEnv(): Record<string, string>
+  /** The same trust variables as a shell `export` prelude, for a caller that
+   *  can only prefix a command line. */
+  trustPrelude(): string
+  /** Append the Veris CA to the CA bundles SDKs ship with them. Run it after
+   *  installing dependencies; returns the files it changed. */
+  patchBundledCas(): Promise<string[]>
   deliverTo(port: number, opts?: DeliverToOpts): Promise<string>
   deliverTo(url: string | null, opts?: DeliverToOpts): Promise<string | null>
 }
@@ -92,11 +105,15 @@ export class VerisApiImpl implements VerisApi {
     // is worse than no receipt at all.
     await probeCanary(this.ctx.sandbox, this.ctx.canaryHost, this.ctx.twinId)
 
-    if (service !== undefined) return fetchReceiptEntry(await this.resolveService(service))
+    if (service !== undefined) {
+      const svc = await this.resolveService(service)
+      return fetchReceiptEntry(svc, this.watermark(svc.name))
+    }
 
     const services = await this.services()
     const entries = await Promise.all(
-      services.filter((s) => isHttpUrl(s.control_url)).map(async (svc) => [svc.name, await fetchReceiptEntry(svc)] as const))
+      services.filter((s) => isHttpUrl(s.control_url)).map(async (svc) =>
+        [svc.name, await fetchReceiptEntry(svc, this.watermark(svc.name))] as const))
     return {
       services: Object.fromEntries(entries),
       mode: 'gateway',
@@ -111,6 +128,11 @@ export class VerisApiImpl implements VerisApi {
    */
   private leaks(): ReceiptLeak[] {
     return ['udp-quic-possible', 'ech-possible']
+  }
+
+  /** Where this service's log was when the run began. 0 reads all of it. */
+  private watermark(service: string): number {
+    return this.ctx.watermarks?.[service] ?? 0
   }
 
   async assertTouched(service: string, match?: TouchMatcher): Promise<void> {
@@ -141,6 +163,38 @@ export class VerisApiImpl implements VerisApi {
   /** The CA trust vars injected at create, for callers building their own env. */
   getTrustEnv(): Record<string, string> {
     return vendoredTrustEnv()
+  }
+
+  /**
+   * The same variables as a shell prelude, for a caller that has no env map to
+   * fill — anything running a command through a session or a shell it did not
+   * build the environment for. Daytona resets SSL_CERT_FILE,
+   * REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE and NODE_EXTRA_CA_CERTS to its own CA
+   * file inside the sandbox, and that file cannot verify the gateway's leaf, so
+   * a command that inherits them fails on certificate validation:
+   * `uv sync` dies with "invalid peer certificate: UnknownIssuer".
+   *
+   *   sbx.process.executeCommand(`${sbx.veris.trustPrelude()} uv sync`)
+   */
+  trustPrelude(): string {
+    return trustPrelude(this.getTrustEnv())
+  }
+
+  /**
+   * Append the Veris CA to the CA bundles the code under test's own SDKs ship.
+   *
+   * The variables above reach every client that reads one. stripe-python does
+   * not: it passes `verify=stripe.ca_bundle_path`, so the first Stripe call
+   * fails with "Could not verify Stripe's SSL certificate" in a sandbox where
+   * curl, Node and `requests` all succeed. This patches the file itself, which
+   * is the Daytona-shaped version of the veris CLI's --patch-bundled-cas.
+   *
+   * Call it AFTER installing dependencies — the bundles arrive with them, so
+   * there is nothing to patch at create time. Safe to call again; it returns
+   * only the files it actually changed.
+   */
+  patchBundledCas(): Promise<string[]> {
+    return patchBundledCas(this.ctx.sandbox)
   }
 
   /**

@@ -66,6 +66,100 @@ export function vendoredTrustEnv(): Record<string, string> {
 }
 
 /**
+ * The same variables as one POSIX `export` prelude, to prefix a command with.
+ *
+ * The map above is the right shape when you control the process's environment.
+ * A caller that does not — anything handing a command to a shell whose env it
+ * did not build — has nowhere to put a map, and the command inherits Daytona's
+ * overwritten SSL_CERT_FILE / REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE /
+ * NODE_EXTRA_CA_CERTS instead. Measured with the inherited value: `uv sync`
+ * dies with "invalid peer certificate: UnknownIssuer". Prefixing this makes
+ * the command's own shell put the Veris bundle back:
+ *
+ *   sandbox.process.executeCommand(`${trustPrelude()} ${yourCommand}`)
+ *
+ * Values are single-quoted, so the string stays one safe command line whatever
+ * the control plane served.
+ */
+export function trustPrelude(env: Record<string, string> = vendoredTrustEnv()): string {
+  return Object.entries(env)
+    .map(([k, v]) => `export ${k}='${v.replace(/'/g, `'\\''`)}';`)
+    .join(' ')
+}
+
+/**
+ * CA bundles that SDKs ship INSIDE the code under test, as slash-anchored path
+ * suffixes.
+ *
+ * No trust variable reaches these. stripe-python passes
+ * `verify=stripe.ca_bundle_path` explicitly, so all eighteen variables above
+ * are irrelevant to it and the first Stripe call dies with "Could not verify
+ * Stripe's SSL certificate" — the gateway's forged leaf is signed by a CA that
+ * file has never heard of. Appending our CA to the file keeps the SDK on the
+ * code path that ships; the bundle merely holds one more root.
+ *
+ * The table is the veris CLI's (internal/bundlescan), for the reason it gives
+ * there: matched as a path SUFFIX because site-packages prefixes vary per
+ * image and the tail does not, and deliberately with no bare `cacert.pem`
+ * rule, because that filename also names test fixtures and client-auth
+ * material that must not quietly gain a root.
+ */
+export const BUNDLED_CA_FILES: readonly { sdk: string; suffix: string }[] = [
+  { sdk: 'pip (vendored certifi)', suffix: 'pip/_vendor/certifi/cacert.pem' },
+  { sdk: 'certifi', suffix: 'certifi/cacert.pem' },
+  { sdk: 'botocore', suffix: 'botocore/cacert.pem' },
+  // Matches both stripe-python's site-packages layout and the stripe-ruby gem.
+  { sdk: 'stripe', suffix: 'stripe/data/ca-certificates.crt' },
+  { sdk: 'httplib2', suffix: 'httplib2/cacerts.txt' },
+]
+
+/** Where the patch script is written inside the sandbox, so anything that can
+ *  run a shell command — a test harness, an agent, a person over ssh — can
+ *  re-run it after installing dependencies without holding this SDK. */
+export const BUNDLED_CA_PATCH_SCRIPT = '/tmp/veris-patch-bundled-cas.sh'
+
+/** What the script prints per patched file, so the caller can report what
+ *  happened rather than infer it from an exit code. */
+export const BUNDLED_CA_PATCHED_MARKER = '__VERIS_PATCHED__'
+
+/**
+ * The script that finds those bundles and appends the Veris CA to each.
+ *
+ * Meant to run AFTER dependencies are installed, and to be re-run: the bundles
+ * do not exist at create time, and an agent installs more of them mid-session,
+ * so there is no create-time moment that covers either. Idempotent by
+ * construction — a file already carrying our certificate is skipped, matched
+ * on a line of its base64 body rather than on the BEGIN line every certificate
+ * shares.
+ *
+ * Appending in place, where the CLI over-mounts a patched copy: a Daytona
+ * sandbox offers no bind mounts and the container is disposable, so editing
+ * the file is the equivalent move. Unwritable files are skipped rather than
+ * sudo'd — a root-owned bundle in the system Python is rarely the one the
+ * application's virtualenv reads, and silently rewriting system trust is a
+ * larger act than this warrants.
+ */
+export function bundledCaPatchScript(): string {
+  const find = BUNDLED_CA_FILES
+    .map((f) =>
+      `find / -xdev \\( -path /proc -o -path /sys -o -path /dev \\) -prune -o ` +
+      `-path '*/${f.suffix}' -type f -print 2>/dev/null`)
+    .join('; ')
+  return [
+    `marker=$(sed -n 2p ${VERIS_CA_FILE} 2>/dev/null)`,
+    // No CA on disk means nothing to append, and appending nothing to every
+    // bundle in the image would be the worst available no-op.
+    `[ -n "$marker" ] || { echo "no ${VERIS_CA_FILE} to append" >&2; exit 1; }`,
+    `{ ${find}; } | sort -u | while IFS= read -r f; do`,
+    `  [ -w "$f" ] || continue`,
+    `  grep -qF "$marker" "$f" && continue`,
+    `  { printf '\\n'; cat ${VERIS_CA_FILE}; } >> "$f" || continue`,
+    `  echo "${BUNDLED_CA_PATCHED_MARKER} $f"`,
+    `done`,
+  ].join('\n')
+}
+
+/**
  * Node is the one runtime the trust variables above cannot reach.
  *
  * Daytona overwrites NODE_EXTRA_CA_CERTS and SSL_CERT_FILE inside the sandbox
