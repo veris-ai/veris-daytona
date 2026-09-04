@@ -89,6 +89,13 @@ export interface ProvisionResult {
   /** Run this INSIDE the sandbox after installing dependencies, to append the
    *  Veris CA to the CA bundles SDKs ship with them. */
   patchBundledCasCommand: string
+  /** How to get code into the box. Daytona's own CLI has no upload, copy or
+   *  sync command and its `ssh` takes no remote command, so a caller who does
+   *  not know this verb exists has no route in short of writing an SDK script. */
+  pushCommand: string
+  /** How to run one command in the box with trustEnv already exported and its
+   *  output streaming. `daytona exec` can set no variables at all. */
+  execCommand: string
   /** The twin's service names — what `--require-service` would name. */
   services: string[]
   /** When Daytona destroys the sandbox regardless of state. */
@@ -124,10 +131,19 @@ the JSON on stdout:
   trustEnv                the CA variables, as a map — export them on EVERY command
   trustPrelude            the same variables as one line of shell \`export\`s
   patchBundledCasCommand  run it inside the sandbox after installing dependencies
+  pushCommand             how to get code in — the Daytona CLI cannot upload
+  execCommand             how to run one command in there, trustEnv already applied
   services                the twin's service names
   expiresAt               when Daytona destroys the sandbox whatever state it is in
   autoStopMinutes         idle minutes before Daytona stops it
   autoDeleteMinutes       minutes after stopping before Daytona deletes it
+
+Getting code in: the Daytona CLI has no upload, copy or sync command, its \`ssh\`
+takes no remote command, and \`--context\` is a build context on \`create\` only —
+so \`veris-daytona push <daytonaSandboxId>\` is the route. It tars the current
+directory into workDir. \`veris-daytona exec <daytonaSandboxId> -- <command>\`
+then runs a command in there with trustEnv already exported and its output
+streaming, neither of which \`daytona exec\` can do.
 
 Data-plane variables (DATABASE_URL and the like) are already set inside the
 sandbox, so a command run in there inherits them.
@@ -229,6 +245,11 @@ export function provisionResult(facts: {
     // afterwards without holding this SDK. Naming the command here is the whole
     // of "how a caller patches bundled CAs": one line of shell, no third verb.
     patchBundledCasCommand: `sh ${BUNDLED_CA_PATCH_SCRIPT}`,
+    // Named with the id already in them, because the gap this closes is a
+    // caller who reads the JSON, finds workDir, and has nothing that can put a
+    // file there — the trial wrote a Node script against @daytona/sdk to do it.
+    pushCommand: `veris-daytona push ${facts.daytonaSandboxId}`,
+    execCommand: `veris-daytona exec ${facts.daytonaSandboxId} -- <command>`,
     services: facts.services,
     expiresAt: facts.expiresAt,
     autoStopMinutes: AUTO_STOP_MINUTES,

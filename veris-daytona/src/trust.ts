@@ -118,9 +118,19 @@ export const BUNDLED_CA_FILES: readonly { sdk: string; suffix: string }[] = [
  *  re-run it after installing dependencies without holding this SDK. */
 export const BUNDLED_CA_PATCH_SCRIPT = '/tmp/veris-patch-bundled-cas.sh'
 
-/** What the script prints per patched file, so the caller can report what
- *  happened rather than infer it from an exit code. */
-export const BUNDLED_CA_PATCHED_MARKER = '__VERIS_PATCHED__'
+/**
+ * What the script prints per patched file, so the caller can report what
+ * happened rather than infer it from an exit code.
+ *
+ * A sentence rather than a machine marker, because both routes to this script
+ * are read by a person. `provision` tells a caller to run `sh
+ * /tmp/veris-patch-bundled-cas.sh` themselves, and whatever the script prints
+ * is what they see — a bare `__VERIS_PATCHED__ /path` reads as debug output
+ * that escaped. `patchBundledCas()` parses the paths back off this same
+ * constant, and cli.ts prints the same sentence for the SDK route, so the
+ * prose a human reads and the list a program gets cannot drift apart.
+ */
+export const BUNDLED_CA_PATCHED_MARKER = 'the Veris CA was appended to '
 
 /**
  * The script that finds those bundles and appends the Veris CA to each.
@@ -150,12 +160,23 @@ export function bundledCaPatchScript(): string {
     // No CA on disk means nothing to append, and appending nothing to every
     // bundle in the image would be the worst available no-op.
     `[ -n "$marker" ] || { echo "no ${VERIS_CA_FILE} to append" >&2; exit 1; }`,
-    `{ ${find}; } | sort -u | while IFS= read -r f; do`,
+    // The whole loop is one brace group at the end of the pipe so `n` survives
+    // to the summary: a pipeline's last stage is a subshell, and a counter
+    // incremented inside a bare `while` would be gone by the time we report it.
+    `{ ${find}; } | sort -u | { n=0`,
+    `while IFS= read -r f; do`,
     `  [ -w "$f" ] || continue`,
     `  grep -qF "$marker" "$f" && continue`,
     `  { printf '\\n'; cat ${VERIS_CA_FILE}; } >> "$f" || continue`,
-    `  echo "${BUNDLED_CA_PATCHED_MARKER} $f"`,
+    `  n=$((n+1))`,
+    `  echo "${BUNDLED_CA_PATCHED_MARKER}$f"`,
     `done`,
+    // Silence is the common case and it reads as "did that even run?", so say
+    // so. patchBundledCas() keeps only the lines above, so this costs it
+    // nothing.
+    `if [ "$n" -gt 0 ]; then echo "$n bundled CA file(s) patched"`,
+    `else echo "no bundled CA file needed patching — no SDK that ships its own is installed here, or they already trust the Veris CA"; fi`,
+    `}`,
   ].join('\n')
 }
 

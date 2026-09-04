@@ -1,11 +1,13 @@
-// The `veris-daytona` executable. Three verbs — `run` (run.ts), `provision`
-// (provision.ts) and `teardown` (teardown.ts) — whose flags and pure logic live
-// in a module each; this file is the part that talks to Daytona and the control
-// plane.
+// The `veris-daytona` executable. Five verbs — `run` (run.ts), `provision`
+// (provision.ts), `push` (push.ts), `exec` (exec.ts) and `teardown`
+// (teardown.ts) — whose flags and pure logic live in a module each; this file
+// is the part that talks to Daytona and the control plane.
 //
-// `run` does the whole job in one command. `provision` and `teardown` are the
-// same job split at the seam: provision wires a sandbox and stops, and whoever
-// called it uploads code, runs a suite and decides what the receipt proved.
+// `run` does the whole job in one command. The other four are the same job cut
+// into the pieces a caller drives itself: provision wires a sandbox and stops,
+// push puts code in it, exec runs a command in it, teardown deletes it. Reading
+// the receipt and deciding what it proved belongs to the `veris` CLI, so none
+// of the four does it — that is the seam, and the reason they exist.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { DaytonaNotFoundError } from '@daytona/sdk'
@@ -14,10 +16,15 @@ import { Daytona, isVerisSandbox, verisOwnsTwin, verisTwinId } from './daytona'
 import type { VerisSandbox } from './daytona'
 import { VerisError } from './errors'
 import {
-  TIMED_OUT_EXIT, UPLOAD_EXCLUDES, USAGE, UsageError, commandEnv, commandLine, formatReceipt,
-  parseRunArgs, shellQuote, verdict,
+  TIMED_OUT_EXIT, UPLOAD_EXCLUDES, USAGE, UsageError, WORK_SUBDIR, commandEnv, commandLine,
+  formatReceipt, parseRunArgs, shellQuote, verdict,
 } from './run'
 import type { RunOptions } from './run'
+import { PUSH_USAGE, parsePushArgs } from './push'
+import type { PushOptions } from './push'
+import { EXEC_USAGE, parseExecArgs } from './exec'
+import type { ExecOptions } from './exec'
+import { BUNDLED_CA_PATCHED_MARKER, vendoredTrustEnv } from './trust'
 import {
   AUTO_DELETE_MINUTES, AUTO_STOP_MINUTES, PROVISION_TTL_MINUTES, PROVISION_USAGE,
   parseProvisionArgs, provisionJson, provisionResult,
@@ -35,12 +42,14 @@ const ROOT_USAGE = `usage: veris-daytona <command> [options]
 
   run         run a command in a wired sandbox, print the receipt, delete everything
   provision   create a wired sandbox on an existing twin, print its JSON, and stop
+  push        put code into a sandbox that already exists
+  exec        run one command in a sandbox, with the Veris trust environment applied
   teardown    delete a sandbox that provision (or run --keep) left behind
 
 veris-daytona <command> --help describes each one.`
 
 /** Every text that IS the help, rather than a complaint ending in it. */
-const HELP_TEXTS: readonly string[] = [ROOT_USAGE, USAGE, PROVISION_USAGE, TEARDOWN_USAGE]
+const HELP_TEXTS: readonly string[] = [ROOT_USAGE, USAGE, PROVISION_USAGE, PUSH_USAGE, EXEC_USAGE, TEARDOWN_USAGE]
 
 export async function main(argv: readonly string[]): Promise<number> {
   const [verb, ...rest] = argv
@@ -54,6 +63,14 @@ export async function main(argv: readonly string[]): Promise<number> {
     case 'provision': {
       const opts = parseOrExit(() => parseProvisionArgs(rest))
       return typeof opts === 'number' ? opts : provision(opts)
+    }
+    case 'push': {
+      const opts = parseOrExit(() => parsePushArgs(rest))
+      return typeof opts === 'number' ? opts : push(opts)
+    }
+    case 'exec': {
+      const opts = parseOrExit(() => parseExecArgs(rest))
+      return typeof opts === 'number' ? opts : exec(opts)
     }
     case 'teardown': {
       const opts = parseOrExit(() => parseTeardownArgs(rest))
@@ -81,11 +98,8 @@ function parseOrExit<T extends object>(parse: () => T): T | number {
 }
 
 async function run(opts: RunOptions): Promise<number> {
-  const daytonaKey = process.env.DAYTONA_API_KEY
-  if (!daytonaKey) {
-    process.stderr.write('DAYTONA_API_KEY is not set. Get one at https://app.daytona.io/dashboard/keys\n')
-    return 2
-  }
+  const daytonaKey = requireDaytonaKey()
+  if (!daytonaKey) return 2
   // Only the twin's own TTL backstop; the sandbox is deleted at the end regardless.
   const ttlMinutes = Math.ceil(opts.timeoutSeconds / 60) + 30
 
@@ -116,23 +130,9 @@ async function run(opts: RunOptions): Promise<number> {
   let code = 2
   try {
     const root = await sandboxRoot(sandbox)
-    const work = `${root}/veris-run`
+    const work = `${root}/${WORK_SUBDIR}`
 
-    if (opts.repo) {
-      say(`Cloning ${opts.repo}${opts.ref ? ` (${opts.ref})` : ''}`)
-      const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN
-      const auth = token && /github\.com/.test(opts.repo) ? ['x-access-token', token] as const : [undefined, undefined] as const
-      await sandbox.git.clone(opts.repo, work, opts.ref, undefined, auth[0], auth[1], undefined, 1)
-    } else {
-      say(`Uploading ${process.cwd()}`)
-      const archive = packCwd()
-      note(`${(archive.length / 1024 / 1024).toFixed(1)} MB after excluding ${UPLOAD_EXCLUDES.join(', ')}`)
-      await sandbox.fs.uploadFile(archive, `${root}/veris-run.tgz`, 300)
-      const unpack = await sandbox.process.executeCommand(
-        `mkdir -p '${work}' && tar xzf '${root}/veris-run.tgz' -C '${work}' && rm '${root}/veris-run.tgz'`,
-        undefined, undefined, 120)
-      if (unpack.exitCode !== 0) throw new VerisError(`unpacking the upload failed: ${unpack.result}`)
-    }
+    await putCode(sandbox, root, work, opts.repo, opts.ref)
 
     const env = commandEnv(sandbox.veris.getTrustEnv(), opts.env)
 
@@ -152,7 +152,10 @@ async function run(opts: RunOptions): Promise<number> {
     // curl, Node and requests are all fine. Appending our CA to those files is
     // the Daytona-shaped version of the veris CLI's --patch-bundled-cas.
     const patched = await sandbox.veris.patchBundledCas()
-    for (const file of patched) note(`bundled CA ${file} — the Veris CA appended`)
+    // The script's own wording, deliberately: a caller who runs
+    // patchBundledCasCommand by hand in a provisioned box sees these exact
+    // lines, and two routes to one act should not read as two different acts.
+    for (const file of patched) note(`${BUNDLED_CA_PATCHED_MARKER}${file}`)
     if (patched.length) note(`${patched.length} bundled CA file(s) patched`)
 
     say(`Running: ${opts.command}`)
@@ -199,11 +202,8 @@ async function run(opts: RunOptions): Promise<number> {
  * delete.
  */
 async function provision(opts: ProvisionOptions): Promise<number> {
-  const daytonaKey = process.env.DAYTONA_API_KEY
-  if (!daytonaKey) {
-    process.stderr.write('DAYTONA_API_KEY is not set. Get one at https://app.daytona.io/dashboard/keys\n')
-    return 2
-  }
+  const daytonaKey = requireDaytonaKey()
+  if (!daytonaKey) return 2
   // Read before create, so the printed expiry is never later than the truth:
   // Daytona counts the TTL from the moment the sandbox exists, which is after
   // this line, not before it.
@@ -238,13 +238,17 @@ async function provision(opts: ProvisionOptions): Promise<number> {
   // The caller has to put code somewhere, and a directory that already exists
   // is one fewer thing for them to get right. Made here rather than named and
   // left absent, because `cd` into it is the first thing they will do.
-  const work = `${await sandboxRoot(sandbox)}/veris-run`
+  const work = `${await sandboxRoot(sandbox)}/${WORK_SUBDIR}`
   const mkdir = await sandbox.process.executeCommand(`mkdir -p ${shellQuote(work)}`, undefined, undefined, 60)
   if (mkdir.exitCode !== 0) throw new VerisError(`could not create ${work} in the sandbox: ${mkdir.result}`)
 
   const services = await sandbox.veris.services()
   say('Ready. The sandbox is up, trusted, and running nothing')
-  note(`delete it with: veris-daytona teardown ${sandbox.id}`)
+  // The Daytona CLI can do none of these three — no upload command, no way to
+  // set a variable on exec — so naming them here is not decoration.
+  note(`put code in:   veris-daytona push ${sandbox.id}`)
+  note(`run something: veris-daytona exec ${sandbox.id} -- <command>`)
+  note(`delete it:     veris-daytona teardown ${sandbox.id}`)
 
   out(provisionJson(provisionResult({
     daytonaSandboxId: sandbox.id,
@@ -261,6 +265,66 @@ async function provision(opts: ProvisionOptions): Promise<number> {
 }
 
 /**
+ * Put code into a sandbox that already exists.
+ *
+ * The upload half of `run`, pointed at a box `provision` handed back. It is a
+ * verb rather than a documented one-liner because Daytona offers no one-liner:
+ * their CLI has no upload, copy or sync command, `daytona ssh` takes exactly
+ * one argument so `tar | ssh` is not available and there is no scp or rsync,
+ * and `--context` is a Docker build context that only exists on `create`. The
+ * trial that ran the whole provision workflow end to end had to write a Node
+ * script against @daytona/sdk to get a tarball in, and retype the fifteen
+ * excludes by hand.
+ */
+async function push(opts: PushOptions): Promise<number> {
+  const daytonaKey = requireDaytonaKey()
+  if (!daytonaKey) return 2
+
+  const sandbox = await getSandbox(daytonaKey, opts.sandboxId)
+  if (typeof sandbox === 'number') return sandbox
+
+  const root = await sandboxRoot(sandbox)
+  await putCode(sandbox, root, `${root}/${WORK_SUBDIR}`, opts.repo, opts.ref)
+  return 0
+}
+
+/**
+ * Run one command in a sandbox that already exists, with the trust environment
+ * applied and the output streaming.
+ *
+ * The command half of `run` minus the receipt and the verdict, which the
+ * `veris` CLI owns: take a watermark before this and read
+ * `veris sandbox trace --since` after. What it keeps is the part `daytona exec`
+ * cannot do — it has no --env flag at all, so a command run through it inherits
+ * Daytona's own CA file and fails on the gateway's certificate unless the
+ * caller remembers the trust prelude every single time; and it returns nothing
+ * until the command ends, which is fine for a 9-second install and useless for
+ * a 10-minute suite.
+ */
+async function exec(opts: ExecOptions): Promise<number> {
+  const daytonaKey = requireDaytonaKey()
+  if (!daytonaKey) return 2
+
+  const sandbox = await getSandbox(daytonaKey, opts.sandboxId)
+  if (typeof sandbox === 'number') return sandbox
+
+  // A box with no twin has no gateway to trust, and pointing its command at a
+  // CA bundle that was never assembled would break TLS that currently works.
+  // The map itself is a constant, so a sandbox whose Veris surface could not be
+  // rehydrated — no VERIS_API_KEY — still gets the right values: this verb
+  // needs only a Daytona key.
+  const wired = verisTwinId(sandbox) !== undefined
+  if (!wired) note(`${sandbox.id} has no Veris twin, so there is no trust environment to apply`)
+  const trust = !wired ? {} : isVerisSandbox(sandbox) ? sandbox.veris.getTrustEnv() : vendoredTrustEnv()
+
+  const cwd = opts.cwd ?? `${await sandboxRoot(sandbox)}/${WORK_SUBDIR}`
+  say(`Running in ${cwd}: ${opts.command}`)
+  const code = await stream(sandbox, opts.command, cwd, commandEnv(trust, opts.env), opts.timeoutSeconds)
+  note(`exit ${code}`)
+  return code
+}
+
+/**
  * Delete one Daytona sandbox, and say what happened to its twin.
  *
  * The twin decision is not made here. `sandbox.delete()` already deletes a twin
@@ -269,24 +333,13 @@ async function provision(opts: ProvisionOptions): Promise<number> {
  * one fact rather than two.
  */
 async function teardown(opts: TeardownOptions): Promise<number> {
-  const daytonaKey = process.env.DAYTONA_API_KEY
-  if (!daytonaKey) {
-    process.stderr.write('DAYTONA_API_KEY is not set. Get one at https://app.daytona.io/dashboard/keys\n')
-    return 2
-  }
+  const daytonaKey = requireDaytonaKey()
+  if (!daytonaKey) return 2
 
-  let sandbox: Sandbox
-  try {
-    sandbox = await new Daytona({ apiKey: daytonaKey }).get(opts.sandboxId)
-  } catch (e) {
-    if (!(e instanceof DaytonaNotFoundError)) throw e
-    // Said in full, because the obvious worry on reading this is the other
-    // resource: a twin bills on its own and nothing here has been near it.
-    process.stderr.write(
-      `no Daytona sandbox '${opts.sandboxId}' — already deleted, or it belongs to another ` +
-      `organization than this DAYTONA_API_KEY. No Veris twin was touched.\n`)
-    return 1
-  }
+  // Said in full, because the obvious worry on reading a missing sandbox is the
+  // other resource: a twin bills on its own and nothing here has been near it.
+  const sandbox = await getSandbox(daytonaKey, opts.sandboxId, ' No Veris twin was touched.')
+  if (typeof sandbox === 'number') return sandbox
 
   const twinId = verisTwinId(sandbox)
   const owns = verisOwnsTwin(sandbox)
@@ -313,7 +366,66 @@ async function teardown(opts: TeardownOptions): Promise<number> {
   return 0
 }
 
-/** The sandbox's home, with no trailing slash — where both verbs put code. */
+/** DAYTONA_API_KEY, or undefined after saying where one comes from. */
+function requireDaytonaKey(): string | undefined {
+  const key = process.env.DAYTONA_API_KEY
+  if (!key) process.stderr.write('DAYTONA_API_KEY is not set. Get one at https://app.daytona.io/dashboard/keys\n')
+  return key
+}
+
+/**
+ * One sandbox by id, or the exit code a missing one deserves.
+ *
+ * Not found is 1 rather than a stack trace: it is the ordinary outcome of
+ * acting on a box that expired or belongs to another organization, and the id
+ * alone looks identical in both cases, so the message names both. `tail` is
+ * whatever else the verb owes the reader about what it did NOT touch.
+ */
+async function getSandbox(apiKey: string, id: string, tail = ''): Promise<Sandbox | number> {
+  try {
+    return await new Daytona({ apiKey }).get(id)
+  } catch (e) {
+    if (!(e instanceof DaytonaNotFoundError)) throw e
+    process.stderr.write(
+      `no Daytona sandbox '${id}' — already deleted, or it belongs to another ` +
+      `organization than this DAYTONA_API_KEY.${tail}\n`)
+    return 1
+  }
+}
+
+/**
+ * Put the caller's code in the sandbox: a shallow clone when they named a repo,
+ * the current directory tarred otherwise.
+ *
+ * Shared by `run` and `push` because they are the same act at two moments — one
+ * on a box it just created, one on a box someone else provisioned. Sharing it
+ * is also what keeps UPLOAD_EXCLUDES a single list: the trial retyped all
+ * fifteen by hand, which is the kind of thing that goes wrong quietly.
+ */
+async function putCode(
+  sandbox: Sandbox, root: string, work: string, repo?: string, ref?: string,
+): Promise<void> {
+  if (repo) {
+    say(`Cloning ${repo}${ref ? ` (${ref})` : ''}`)
+    const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN
+    const auth = token && /github\.com/.test(repo) ? ['x-access-token', token] as const : [undefined, undefined] as const
+    await sandbox.git.clone(repo, work, ref, undefined, auth[0], auth[1], undefined, 1)
+    note(`cloned into ${work}`)
+    return
+  }
+  say(`Uploading ${process.cwd()}`)
+  const archive = packCwd()
+  note(`${(archive.length / 1024 / 1024).toFixed(1)} MB after excluding ${UPLOAD_EXCLUDES.join(', ')}`)
+  const tgz = `${root}/${WORK_SUBDIR}.tgz`
+  await sandbox.fs.uploadFile(archive, tgz, 300)
+  const unpack = await sandbox.process.executeCommand(
+    `mkdir -p ${shellQuote(work)} && tar xzf ${shellQuote(tgz)} -C ${shellQuote(work)} && rm ${shellQuote(tgz)}`,
+    undefined, undefined, 120)
+  if (unpack.exitCode !== 0) throw new VerisError(`unpacking the upload failed: ${unpack.result}`)
+  note(`unpacked into ${work}`)
+}
+
+/** The sandbox's home, with no trailing slash — where every verb puts code. */
 async function sandboxRoot(sandbox: Sandbox): Promise<string> {
   const root = (await sandbox.getWorkDir()) ?? (await sandbox.getUserRootDir()) ?? '/home/daytona'
   return root.replace(/\/$/, '')
@@ -322,7 +434,15 @@ async function sandboxRoot(sandbox: Sandbox): Promise<string> {
 /** tar the current directory into memory, minus what gets rebuilt inside. */
 function packCwd(): Buffer {
   const args = ['czf', '-', ...UPLOAD_EXCLUDES.map((x) => `--exclude=${x}`), '-C', process.cwd(), '.']
-  return execFileSync('tar', args, { maxBuffer: 1024 * 1024 * 1024 })
+  return execFileSync('tar', args, {
+    maxBuffer: 1024 * 1024 * 1024,
+    // macOS bsdtar writes an AppleDouble `._name` beside every file it packs.
+    // Measured in the sandbox: a two-file upload arrived as `smoke.py`,
+    // `trust_check.py`, `._smoke.py`, `._trust_check.py` and a bare `._.` —
+    // resource forks for a Linux box that will never read one. The variable is
+    // ignored everywhere else, so it costs nothing on Linux.
+    env: { ...process.env, COPYFILE_DISABLE: '1' },
+  })
 }
 
 /**
@@ -337,7 +457,7 @@ function packCwd(): Buffer {
  * receipt and fails on the exit code, rather than waiting for the sandbox TTL.
  */
 async function stream(
-  sandbox: VerisSandbox, command: string, cwd: string, env: Record<string, string>, timeoutSeconds: number,
+  sandbox: Sandbox, command: string, cwd: string, env: Record<string, string>, timeoutSeconds: number,
 ): Promise<number> {
   const session = `veris-run-${randomUUID().slice(0, 8)}`
   await sandbox.process.createSession(session)

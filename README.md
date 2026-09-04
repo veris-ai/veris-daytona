@@ -17,12 +17,15 @@ And every run ends with a **receipt** of what the vendor actually received.
 Each has its own README with installation and usage. This page is about how they
 work and how to develop them.
 
-`@veris-ai/daytona` also installs a `veris-daytona` executable, and it has three
+`@veris-ai/daytona` also installs a `veris-daytona` executable, and it has five
 verbs. `run` does the whole job in one command — box up, code in, suite run,
-receipt read, everything down. `provision` and `teardown` are that job split at
-the seam: provision wires a box on a twin you already have and stops there, and
-whoever called it installs the dependencies, runs the suite and decides what the
-receipt proved. The Veris-shaped half is identical either way and belongs here —
+receipt read, everything down. The other four are that job cut into the pieces a
+caller drives itself: `provision` wires a box on a twin you already have and
+stops there, `push` puts code in it, `exec` runs a command in it with the trust
+variables applied, `teardown` deletes it. The three middle ones exist because
+Daytona's own CLI has no upload command and no way to set a variable on a
+command it runs; whoever calls them still decides what the receipt proved. The
+Veris-shaped half is identical either way and belongs here —
 the egress credential, the 20-domain allowlist, the outbound proxy, the CA
 bundle, the canary, the trust variables. The "did this run prove anything" half
 belongs to the `veris` CLI, which already owns what a receipt means, what
