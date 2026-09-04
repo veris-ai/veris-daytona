@@ -30,14 +30,17 @@ import { fetchWatermark } from './receipt'
 import { CA_CERT_PATH, nodeOptionsWithTrust, sanitizeTrustEnv } from './trust'
 import { gatewayProxyUrl, installCa, probeCanary } from './gateway'
 import { MissingCredentialsError, VerisError, VerisGatewayNotOfferedError } from './errors'
+import { requireVerisCredentials, resolveVerisCredentials } from './profile'
 import { SDK_VERSION } from './version'
 
 export interface VerisOpts {
-  /** Veris API key. Falls back to process.env.VERIS_API_KEY. Required. */
+  /** Veris API key. Falls back to process.env.VERIS_API_KEY, then to the
+   *  profile `veris login` saved in ~/.veris/twin.yaml. Required. */
   apiKey?: string
   /** Veris environment the twin is deployed from. Falls back to process.env.VERIS_ENVIRONMENT_ID. */
   environmentId?: string
-  /** Control plane base. Falls back to process.env.VERIS_API_BASE, then 'https://svc.api.veris.ai'. */
+  /** Control plane base. Falls back to process.env.VERIS_API_BASE, then the
+   *  profile's api_base, then 'https://svc.api.veris.ai'. */
   apiBase?: string
   /** Attach to an EXISTING twin instead of provisioning one (advanced). delete() will NOT remove it. */
   attachSandboxId?: string
@@ -320,12 +323,17 @@ export class Daytona extends BaseDaytona {
     const twinId = labels[LABEL.twinId]
     if (!twinId) return sandbox
 
-    const apiKey = this.verisDefaults.apiKey ?? process.env.VERIS_API_KEY
+    // The same three layers create() reads — code, environment, the CLI's
+    // login profile — so a sandbox made with a profile's key can be found
+    // again with it.
+    const creds = resolveVerisCredentials({ apiKey: this.verisDefaults.apiKey, apiBase: this.verisDefaults.apiBase })
+    const apiKey = creds.apiKey
     if (!apiKey) return sandbox // no key: no Veris surface, but not an error
 
     // A trusted source decides where the API key is sent — NEVER the sandbox
     // labels, which a compromised sandbox could rewrite to exfiltrate the key.
-    const trustedBase = this.verisDefaults.apiBase ?? process.env.VERIS_API_BASE
+    // The profile file counts as one: it is the user's own, mode 0600.
+    const trustedBase = creds.baseSource === 'default' ? undefined : creds.apiBase
     const labelBase = labels[LABEL.apiBase]
     if (trustedBase && labelBase && labelBase !== trustedBase) {
       throw new VerisError(
@@ -425,18 +433,17 @@ interface ResolvedCoordinates {
   apiBase: string
 }
 
+/**
+ * Key and base from code, the environment, or the CLI's login profile, in that
+ * order (profile.ts). Throws MissingCredentialsError naming every place a key
+ * could have come from when none has one.
+ */
 function resolveCoordinates(v: VerisOpts): ResolvedCoordinates {
-  const apiKey = v.apiKey ?? process.env.VERIS_API_KEY
-  if (!apiKey) {
-    throw new MissingCredentialsError(
-      'no Veris API key: set VERIS_API_KEY in your environment, or pass veris.apiKey. ' +
-      'Get one at https://studio.veris.ai',
-      { phase: 'credentials' })
-  }
+  const creds = requireVerisCredentials({ apiKey: v.apiKey, apiBase: v.apiBase })
   return {
-    apiKey,
+    apiKey: creds.apiKey,
     environmentId: v.environmentId ?? process.env.VERIS_ENVIRONMENT_ID,
-    apiBase: (v.apiBase ?? process.env.VERIS_API_BASE ?? 'https://svc.api.veris.ai').replace(/\/$/, ''),
+    apiBase: creds.apiBase,
   }
 }
 

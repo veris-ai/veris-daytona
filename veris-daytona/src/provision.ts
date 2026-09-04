@@ -118,8 +118,11 @@ deleted. One JSON object is printed on stdout; progress goes to stderr.
   --allow-out <host>        extra hostname the sandbox may reach (repeatable)
   --env KEY=VALUE           set as a sandbox environment variable (repeatable)
 
-needs: DAYTONA_API_KEY and VERIS_API_KEY. No VERIS_ENVIRONMENT_ID — the
-environment comes from the twin.
+needs: DAYTONA_API_KEY, and a Veris key: VERIS_API_KEY, or the profile
+\`veris login\` saved in ~/.veris/twin.yaml (VERIS_PROFILE picks one; the
+environment variable wins when both exist). No VERIS_ENVIRONMENT_ID — the
+environment comes from the twin. A Daytona key without delete:sandboxes still
+provisions, with a warning that teardown will be refused.
 
 the JSON on stdout:
   daytonaSandboxId        the Daytona sandbox id; \`veris-daytona teardown\` takes it

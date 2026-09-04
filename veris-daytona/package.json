@@ -31,6 +31,9 @@
     "prepublishOnly": "npm run build",
     "dev": "tsup --watch"
   },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  },
   "peerDependencies": {
     "@daytona/sdk": ">=0.204.1 <1"
   },

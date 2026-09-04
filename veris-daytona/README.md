@@ -20,8 +20,8 @@ Both, because `@daytona/sdk` is a peer dependency — that is what keeps
 
 | variable | where from |
 |---|---|
-| `DAYTONA_API_KEY` | [app.daytona.io/dashboard/keys](https://app.daytona.io/dashboard/keys) |
-| `VERIS_API_KEY` | [studio.veris.ai](https://studio.veris.ai) |
+| `DAYTONA_API_KEY` | [app.daytona.io/dashboard/keys](https://app.daytona.io/dashboard/keys), with the **write and delete sandboxes** permissions — a write-only key provisions boxes it can never delete |
+| `VERIS_API_KEY` | [studio.veris.ai](https://studio.veris.ai) — or leave it unset after `veris login`: the CLI's profile in `~/.veris/twin.yaml` is read instead, `VERIS_PROFILE` picks one, and the variable wins whenever both exist |
 | `VERIS_ENVIRONMENT_ID` | a Veris environment — it decides which vendor services your twin gets |
 
 ## Use
@@ -184,6 +184,13 @@ it stops after 30 idle minutes, Daytona deletes it an hour after that, and it
 is destroyed 4 hours after creation whatever state it is in. The twin's TTL is
 untouched — it belongs to whoever created the twin.
 
+Deleting needs a Daytona key with the `delete:sandboxes` permission, and a key
+made with "write sandboxes" alone does not have it. `teardown` then exits 1
+saying so: which key, which permissions it has, that the box is still there,
+when its own brakes stop and delete it, what happened to the twin, and where a
+key that can delete comes from. `provision` and `run` read the key's
+permissions first and warn about the same thing *before* creating a box.
+
 ### Why `assertTouched` and not just a green suite
 
 A test suite that skipped its integration and one that exercised it look
@@ -318,6 +325,9 @@ four systems involved refused:
   the default registries are trimmed from the tail to fit, and what was dropped
   is printed. Required hosts alone exceeding 20 fails at `sandbox-create` with
   the count and the knobs, rather than as a raw Daytona refusal.
+- **`teardown` needs `delete:sandboxes` on the Daytona key.** A write-only
+  key creates boxes it cannot delete; the refusal says when Daytona's own
+  auto-stop and auto-delete will, and `provision` warns before creating one.
 - **A very long run's receipt is a floor.** The twin's log is read in pages up
   to a budget; past it, `entry.capped` is true and `run` prints `≥N`.
 

@@ -61,8 +61,10 @@ Veris twin, then prints what the twin received.
   --timeout <seconds>       how long <command> may run (default: ${DEFAULT_TIMEOUT_SECONDS})
   --keep                    leave the sandbox and twin running afterwards
 
-needs: DAYTONA_API_KEY, VERIS_API_KEY, and VERIS_ENVIRONMENT_ID (or --environment).
-GITHUB_TOKEN or GH_TOKEN is used for a private --repo.
+needs: DAYTONA_API_KEY (with delete:sandboxes, or the sandbox outlives the run),
+a Veris key — VERIS_API_KEY, or the profile \`veris login\` saved in
+~/.veris/twin.yaml (VERIS_PROFILE picks one) — and VERIS_ENVIRONMENT_ID (or
+--environment). GITHUB_TOKEN or GH_TOKEN is used for a private --repo.
 
 exit code: the command's; 1 if the twin received nothing (a pass without a receipt is not a pass).`
 

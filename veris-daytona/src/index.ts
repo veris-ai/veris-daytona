@@ -47,6 +47,16 @@ export {
   nodeOptionsWithTrust, vendoredTrustEnv, trustPrelude,
 } from './trust'
 export { gatewayProxyUrl, patchBundledCas } from './gateway'
+export {
+  DEFAULT_API_BASE, profilePath, resolveVerisCredentials, requireVerisCredentials, missingKeyMessage,
+} from './profile'
+export type { VerisCredentials, ResolveOpts, ProfileFile } from './profile'
+export {
+  DAYTONA_API_URL, DELETE_SANDBOXES, daytonaApiUrl, fetchDaytonaKey, canDeleteSandboxes, cannotTeardownWarning,
+} from './daytona-key'
+export type { DaytonaKeyInfo } from './daytona-key'
+export { isPermissionDenied, sandboxBrakes, teardownRefusedMessage } from './teardown'
+export type { RefusedTeardown } from './teardown'
 export { fetchManual, assertHttpControlPlane } from './state'
 export {
   VerisError,
