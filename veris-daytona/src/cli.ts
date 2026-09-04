@@ -30,8 +30,10 @@ import {
   parseProvisionArgs, provisionJson, provisionResult,
 } from './provision'
 import type { ProvisionOptions } from './provision'
-import { TEARDOWN_USAGE, parseTeardownArgs } from './teardown'
+import { TEARDOWN_USAGE, isPermissionDenied, parseTeardownArgs, teardownRefusedMessage } from './teardown'
 import type { TeardownOptions } from './teardown'
+import { canDeleteSandboxes, cannotTeardownWarning, fetchDaytonaKey } from './daytona-key'
+import { missingKeyWhere, resolveVerisCredentials } from './profile'
 import { SDK_VERSION } from './version'
 
 const out = (msg: string) => process.stdout.write(msg + '\n')
@@ -100,6 +102,7 @@ function parseOrExit<T extends object>(parse: () => T): T | number {
 async function run(opts: RunOptions): Promise<number> {
   const daytonaKey = requireDaytonaKey()
   if (!daytonaKey) return 2
+  await warnIfCannotDelete(daytonaKey)
   // Only the twin's own TTL backstop; the sandbox is deleted at the end regardless.
   const ttlMinutes = Math.ceil(opts.timeoutSeconds / 60) + 30
 
@@ -186,7 +189,14 @@ async function run(opts: RunOptions): Promise<number> {
         : `delete the sandbox with: veris-daytona teardown ${sandbox.id}   # your twin is left alone`)
     } else {
       say(owns ? 'Deleting the sandbox and twin' : `Deleting the sandbox; twin ${sandbox.verisSandboxId} is yours and is left running`)
-      await sandbox.delete().catch((e) => process.stderr.write(`  cleanup failed: ${e}\n`))
+      try {
+        await sandbox.delete()
+      } catch (e) {
+        // A key without delete:sandboxes gets here on every run, and "cleanup
+        // failed: Access denied" says neither why nor what the box does now.
+        const why = isPermissionDenied(e) ? await refusedMessage(daytonaKey, sandbox, owns) : String(e)
+        process.stderr.write(`  cleanup failed: ${why}\n`)
+      }
     }
   }
 }
@@ -204,6 +214,9 @@ async function run(opts: RunOptions): Promise<number> {
 async function provision(opts: ProvisionOptions): Promise<number> {
   const daytonaKey = requireDaytonaKey()
   if (!daytonaKey) return 2
+  // Before the box exists, so a teardown that cannot happen is learned now and
+  // not after the box has been billing for an afternoon.
+  await warnIfCannotDelete(daytonaKey)
   // Read before create, so the printed expiry is never later than the truth:
   // Daytona counts the TTL from the moment the sandbox exists, which is after
   // this line, not before it.
@@ -345,14 +358,16 @@ async function teardown(opts: TeardownOptions): Promise<number> {
   const owns = verisOwnsTwin(sandbox)
   if (owns && !isVerisSandbox(sandbox)) {
     // The labels say this sandbox owns a twin, and the Veris surface could not
-    // be rehydrated — in practice, VERIS_API_KEY is unset. Deleting now would
-    // strand the twin silently, so refuse and name the key. An ATTACHED twin
+    // be rehydrated — in practice, no Veris key anywhere: not in the
+    // environment, not in the CLI's login profile. Deleting now would strand
+    // the twin silently, so refuse and name both places. An ATTACHED twin
     // needs no key at all, which is why this asks about ownership and not
     // merely about a twin existing.
     process.stderr.write(
-      `sandbox ${sandbox.id} owns Veris twin ${twinId} and VERIS_API_KEY is not set, so the twin ` +
-      `cannot be deleted. Set it and run this again, or the twin outlives the sandbox until its ` +
-      `TTL. Nothing was deleted.\n`)
+      `sandbox ${sandbox.id} owns Veris twin ${twinId}, and no Veris API key was found ` +
+      `(${missingKeyWhere(resolveVerisCredentials())}), so the twin cannot be deleted. Run ` +
+      `\`veris login\` or set VERIS_API_KEY and run this again, or the twin outlives the sandbox ` +
+      `until its TTL. Nothing was deleted.\n`)
     return 2
   }
 
@@ -361,7 +376,16 @@ async function teardown(opts: TeardownOptions): Promise<number> {
     : twinId
       ? `Deleting the sandbox; twin ${twinId} is yours and is left running`
       : 'Deleting the sandbox (it has no Veris twin)')
-  await sandbox.delete()
+  try {
+    await sandbox.delete()
+  } catch (e) {
+    // Daytona's 403 is a fact about the key, not about the sandbox, and the
+    // box is still there billing — so say what it is, what the box does on
+    // its own, and how to delete it sooner.
+    if (!isPermissionDenied(e)) throw e
+    process.stderr.write(`${await refusedMessage(daytonaKey, sandbox, owns)}\n`)
+    return 1
+  }
   note(`deleted ${sandbox.id}`)
   return 0
 }
@@ -371,6 +395,34 @@ function requireDaytonaKey(): string | undefined {
   const key = process.env.DAYTONA_API_KEY
   if (!key) process.stderr.write('DAYTONA_API_KEY is not set. Get one at https://app.daytona.io/dashboard/keys\n')
   return key
+}
+
+/**
+ * Say, before a box is created, that this key will not be able to delete it.
+ *
+ * Best effort on purpose: a permissions record that cannot be read is silence,
+ * never a refusal, because a create that would have worked must not fail on
+ * a preflight. The warning quotes the box's own brakes, since with this key
+ * they are the only thing that will ever delete it.
+ */
+async function warnIfCannotDelete(daytonaKey: string): Promise<void> {
+  const key = await fetchDaytonaKey(daytonaKey)
+  if (key && canDeleteSandboxes(key) === false) {
+    process.stderr.write(`\x1b[33m!\x1b[0m ${cannotTeardownWarning(key, AUTO_STOP_MINUTES, AUTO_DELETE_MINUTES)}\n`)
+  }
+}
+
+/** The refusal, from the sandbox's own intervals and the key's own record. */
+async function refusedMessage(daytonaKey: string, sandbox: Sandbox, ownsTwin: boolean): Promise<string> {
+  return teardownRefusedMessage({
+    sandboxId: sandbox.id,
+    twinId: verisTwinId(sandbox),
+    ownsTwin,
+    autoStopMinutes: sandbox.autoStopInterval,
+    autoDeleteMinutes: sandbox.autoDeleteInterval,
+    expiresAt: sandbox.autoDestroyAt,
+    key: await fetchDaytonaKey(daytonaKey),
+  })
 }
 
 /**
