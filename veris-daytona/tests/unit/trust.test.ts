@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { sanitizeTrustEnv, vendoredTrustEnv, nodeOptionsWithTrust, NODE_TRUST_FLAG, SYSTEM_BUNDLE, CA_CERT_PATH, VERIS_BUNDLE } from '../../src/trust'
+import {
+  sanitizeTrustEnv, vendoredTrustEnv, nodeOptionsWithTrust, trustPrelude, bundledCaPatchScript,
+  NODE_TRUST_FLAG, SYSTEM_BUNDLE, CA_CERT_PATH, VERIS_BUNDLE, VERIS_CA_FILE,
+  BUNDLED_CA_FILES, BUNDLED_CA_PATCHED_MARKER,
+} from '../../src/trust'
 
 describe('vendoredTrustEnv', () => {
   it('points every var — NODE_EXTRA_CA_CERTS included — at the merged bundle', () => {
@@ -54,5 +58,64 @@ describe('nodeOptionsWithTrust', () => {
   })
   it('is not a served trust var: the control plane cannot set NODE_OPTIONS', () => {
     expect(sanitizeTrustEnv({ NODE_OPTIONS: '--require /evil.js' })).not.toHaveProperty('NODE_OPTIONS')
+  })
+})
+
+describe('trustPrelude', () => {
+  // The gap it fills: Daytona resets SSL_CERT_FILE, REQUESTS_CA_BUNDLE,
+  // CURL_CA_BUNDLE and NODE_EXTRA_CA_CERTS inside the sandbox to its own CA
+  // file, which cannot verify the gateway's leaf. A caller that hands a command
+  // to a shell it did not build the env for has nowhere to put a map — measured
+  // with the inherited value, `uv sync` dies with "invalid peer certificate:
+  // UnknownIssuer".
+  it('exports every variable the map carries', () => {
+    const prelude = trustPrelude()
+    for (const key of Object.keys(vendoredTrustEnv())) {
+      expect(prelude, key).toContain(`export ${key}='${VERIS_BUNDLE}';`)
+    }
+  })
+
+  it('is one line, so it can prefix a command', () => {
+    expect(trustPrelude()).not.toContain('\n')
+    expect(`${trustPrelude()} uv sync`).toContain(`export REQUESTS_CA_BUNDLE='${VERIS_BUNDLE}'; `)
+  })
+
+  it('quotes the value, so a served path cannot become a second command', () => {
+    expect(trustPrelude({ SSL_CERT_FILE: "/tmp/x'; rm -rf /; '" }))
+      .toBe(`export SSL_CERT_FILE='/tmp/x'\\''; rm -rf /; '\\''';`)
+  })
+})
+
+describe('bundledCaPatchScript', () => {
+  // stripe-python passes verify=stripe.ca_bundle_path, so none of the eighteen
+  // trust variables reaches it and the first Stripe call fails with "Could not
+  // verify Stripe's SSL certificate". The file itself is what has to change.
+  it('looks for every bundle in the table, anchored at a path separator', () => {
+    const script = bundledCaPatchScript()
+    for (const { suffix } of BUNDLED_CA_FILES) expect(script, suffix).toContain(`-path '*/${suffix}'`)
+    // No bare cacert.pem rule: that filename also names test fixtures and
+    // client-auth material, which must not quietly gain a root.
+    expect(script).not.toContain(`-path '*/cacert.pem'`)
+  })
+
+  it('skips a file that already carries our certificate, so re-running is free', () => {
+    // Matched on a line of the base64 body, never the BEGIN line every
+    // certificate in every bundle shares.
+    expect(bundledCaPatchScript()).toContain(`marker=$(sed -n 2p ${VERIS_CA_FILE}`)
+    expect(bundledCaPatchScript()).toContain('grep -qF "$marker" "$f" && continue')
+  })
+
+  it('appends, never replaces — a bundle holding only our root breaks everything else', () => {
+    expect(bundledCaPatchScript()).toContain(`>> "$f"`)
+  })
+
+  it('does nothing at all when the CA is not on disk', () => {
+    // Appending an empty file to every CA bundle in the image would be the
+    // worst available no-op.
+    expect(bundledCaPatchScript()).toContain(`[ -n "$marker" ] ||`)
+  })
+
+  it('reports each file it changed, so the caller can say what happened', () => {
+    expect(bundledCaPatchScript()).toContain(`echo "${BUNDLED_CA_PATCHED_MARKER} $f"`)
   })
 })

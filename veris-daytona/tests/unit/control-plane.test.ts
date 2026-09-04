@@ -41,10 +41,17 @@ describe('mintEgressCredential capability probe', () => {
   })
 })
 
-describe('extendTtl tolerates a control plane without the contract', () => {
-  it('swallows a 405 (endpoint predates TTL-extend)', async () => {
-    mockFetch(() => ({ status: 405 }))
-    await expect(cp().extendTtl('env_1', 'sb_1', 20)).resolves.toBeUndefined()
+describe('updateSandbox sends only fields the server declares', () => {
+  // There was an extendTtl() here that PATCHed { ttl_minutes }. The server's
+  // UpdateSandboxRequest declares client_base_url and nothing else, and
+  // pydantic ignores unknown fields, so the call answered 200 having changed
+  // no TTL at all — success reported for work that never happened. It is gone;
+  // this keeps the patch body to what the route actually reads.
+  it('carries the caller`s patch verbatim', async () => {
+    let sent: unknown
+    mockFetch((_u, init) => { sent = JSON.parse(String(init.body)); return { status: 200, body: {} } })
+    await cp().updateSandbox('env_1', 'sb_1', { client_base_url: 'https://app.test' })
+    expect(sent).toEqual({ client_base_url: 'https://app.test' })
   })
 })
 

@@ -11,7 +11,10 @@
 // tunnel is actually live before anyone trusts a receipt.
 import type { Sandbox } from '@daytona/sdk'
 import { ReceiptIntegrityError, SnapshotUnsupportedError, VerisError } from './errors'
-import { CA_CERT_PATH, CA_INSTALL_CMD, SYSTEM_BUNDLE, VERIS_BUNDLE, VERIS_CA_FILE } from './trust'
+import {
+  BUNDLED_CA_PATCHED_MARKER, BUNDLED_CA_PATCH_SCRIPT, CA_CERT_PATH, CA_INSTALL_CMD,
+  SYSTEM_BUNDLE, VERIS_BUNDLE, VERIS_CA_FILE, bundledCaPatchScript,
+} from './trust'
 
 /** A canary hostname must look like a hostname before it goes in a shell command. */
 const HOSTNAME_RE = /^[A-Za-z0-9.-]+$/
@@ -122,6 +125,12 @@ function assertProxyUrl(raw: string): string {
  */
 export async function installCa(sandbox: Sandbox, caPem: string): Promise<void> {
   await sandbox.fs.uploadFile(Buffer.from(caPem, 'utf8'), VERIS_CA_FILE)
+  // The bundled-CA patcher goes in now and runs later: the SDK bundles it
+  // rewrites are installed by the run, not by the image, so there is nothing
+  // for it to find at create time. Putting the script in the sandbox rather
+  // than only in this SDK means anything with a shell can re-run it after an
+  // install — see patchBundledCas below, and BUNDLED_CA_PATCH_SCRIPT.
+  await sandbox.fs.uploadFile(Buffer.from(bundledCaPatchScript(), 'utf8'), BUNDLED_CA_PATCH_SCRIPT)
 
   const script = [
     `chmod 0644 ${VERIS_CA_FILE}`,
@@ -149,6 +158,33 @@ export async function installCa(sandbox: Sandbox, caPem: string): Promise<void> 
       `cannot be trusted (${(r.result ?? '').trim().slice(0, 200)})`,
       { phase: 'ca-install' })
   }
+}
+
+/**
+ * Run the bundled-CA patcher installed above, and report what it changed.
+ *
+ * The gap it closes: an SDK that ships its own CA bundle and loads it by
+ * explicit path reads none of the eighteen trust variables. stripe-python is
+ * the measured case — `verify=stripe.ca_bundle_path`, and the first call fails
+ * with "Could not verify Stripe's SSL certificate" in a sandbox where curl,
+ * Node and `requests` are all fine. This is the Daytona equivalent of the veris
+ * CLI's --patch-bundled-cas.
+ *
+ * Call it AFTER dependencies are installed. Idempotent, so calling it again
+ * after installing more costs one filesystem scan and reports nothing new.
+ *
+ * Never fatal. A sandbox with no such bundle is the normal case, and a scan
+ * that could not run is a missed optimisation, not a broken run — the failure
+ * it prevents still announces itself clearly in the client's own error.
+ */
+export async function patchBundledCas(sandbox: Sandbox): Promise<string[]> {
+  const r = await sh(sandbox, `sh ${BUNDLED_CA_PATCH_SCRIPT}`, 180)
+    .catch((e: unknown) => ({ exitCode: 1, result: String(e) }))
+  return (r.result ?? '')
+    .split('\n')
+    .filter((line) => line.startsWith(BUNDLED_CA_PATCHED_MARKER))
+    .map((line) => line.slice(BUNDLED_CA_PATCHED_MARKER.length).trim())
+    .filter(Boolean)
 }
 
 /**

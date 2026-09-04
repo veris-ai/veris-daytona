@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { UsageError, commandEnv, commandLine, formatReceipt, parseRunArgs, shellJoin, verdict } from '../../src/run'
 import type { Receipt, ReceiptEntry } from '../../src/receipt'
 
-const entry = (name: string, requests: number): ReceiptEntry => ({
-  requests, controlUrl: `https://${name}.twin`, raw: null,
-  entries: Array.from({ length: requests }, (_, i) => ({ method: 'POST', path: `/v1/${i}`, status: 200 })),
+const entry = (name: string, requests: number, capped = false): ReceiptEntry => ({
+  requests, controlUrl: `https://${name}.twin`, raw: null, capped,
+  entries: Array.from({ length: requests }, (_, i) => ({ id: i + 1, method: 'POST', path: `/v1/${i}`, status: 200 })),
 })
 const receipt = (services: Record<string, number>): Receipt => ({
   services: Object.fromEntries(Object.entries(services).map(([n, r]) => [n, entry(n, r)])),
@@ -96,6 +96,17 @@ describe('formatReceipt', () => {
     expect(text).toContain('stripe: 2 request(s)')
     expect(text).toContain('POST /v1/0 -> 200')
     expect(text).toContain('github: 0 request(s)')
+  })
+
+  it('prints a capped read as a floor, never as a count', () => {
+    // The twin's log is paged, so a long enough run is read to a budget rather
+    // than to its end. "2" would be a wrong number stated confidently.
+    const text = formatReceipt({
+      services: { stripe: entry('stripe', 2, true) },
+      mode: 'gateway', integrity: 'verified', leaks: [],
+    }, 'sbx_1')
+    expect(text).toContain('≥2 request(s) reached the twin')
+    expect(text).toContain('stripe: ≥2 request(s)')
   })
 })
 

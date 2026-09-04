@@ -89,6 +89,16 @@ async function run(opts: RunOptions): Promise<number> {
       }
     }
 
+    // After setup, because that is when the bundles exist. An SDK that ships
+    // its own CA bundle reads none of the trust variables above —
+    // stripe-python passes verify=stripe.ca_bundle_path — so its first vendor
+    // call fails on the certificate the gateway forged, in a sandbox where
+    // curl, Node and requests are all fine. Appending our CA to those files is
+    // the Daytona-shaped version of the veris CLI's --patch-bundled-cas.
+    const patched = await sandbox.veris.patchBundledCas()
+    for (const file of patched) note(`bundled CA ${file} — the Veris CA appended`)
+    if (patched.length) note(`${patched.length} bundled CA file(s) patched`)
+
     say(`Running: ${opts.command}`)
     const commandExit = await stream(sandbox, opts.command, work, env, opts.timeoutSeconds)
     note(`exit ${commandExit}`)
