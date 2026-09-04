@@ -76,9 +76,73 @@ Veris receipt — twin sbx_a1b2c3
 | `--image <name>` / `--snapshot <name>` | what to run in; default is Daytona's default snapshot |
 | `--env KEY=VALUE` | exported to both commands, repeatable |
 | `--timeout <seconds>` | for the test command; default 1800 |
-| `--keep` | leave the sandbox and twin up and print their ids |
+| `--keep` | leave the sandbox up afterwards, and the twin if `run` made it |
 
 `veris-daytona run --help` lists everything.
+
+### Or hand the wired box to something else: `provision` and `teardown`
+
+`run` does the whole job in one command, and it stays. But when the thing that
+installs the dependencies and runs the suite is another tool — the `veris` CLI,
+a CI step, an agent — what you want from this package is the first half only:
+
+```sh
+box=$(npx @veris-ai/daytona provision --sandbox sbx_a1b2c3 --image python:3.12)
+```
+
+That creates a sandbox attached to a twin you already have, does every
+Veris-shaped thing — the egress credential, the allowlist and its 20-domain
+fit, the outbound proxy, the CA bundle, the canary, the trust variables — and
+stops. Nothing is uploaded, nothing is run, nothing is deleted. One JSON object
+goes to stdout and every human line to stderr, so `$box` is parseable:
+
+```json
+{
+  "daytonaSandboxId": "e2a1…",
+  "verisSandboxId": "sbx_a1b2c3",
+  "verisEnvironmentId": "env_9f…",
+  "ownsTwin": false,
+  "workDir": "/home/daytona/veris-run",
+  "caBundlePath": "/tmp/veris-ca-bundle.crt",
+  "trustEnv": { "SSL_CERT_FILE": "/tmp/veris-ca-bundle.crt", "…": "…" },
+  "trustPrelude": "export SSL_CERT_FILE='/tmp/veris-ca-bundle.crt'; …",
+  "patchBundledCasCommand": "sh /tmp/veris-patch-bundled-cas.sh",
+  "services": ["stripe", "github"],
+  "expiresAt": "2026-09-04T12:00:00.000Z",
+  "autoStopMinutes": 30,
+  "autoDeleteMinutes": 60
+}
+```
+
+| flag | |
+|---|---|
+| `--sandbox <twin-id>` | the twin to attach to — **required**; `veris up` prints its id |
+| `--image <name>` / `--snapshot <name>` | what to run in; default is Daytona's default snapshot |
+| `--allow-out <host>` | extra hostname the sandbox may reach, repeatable |
+| `--env KEY=VALUE` | set as a sandbox environment variable, repeatable |
+
+From there the box is yours: put your code in `workDir`, export `trustEnv` on
+every command you run in it, and once the dependencies are installed run
+`patchBundledCasCommand` **inside the box** — the script is already in there, so
+a shell caller needs nothing from this package to patch the CA bundles an SDK
+ships with it. Reading the receipt and deciding what it proved is the caller's
+job too; that is the whole point of the split.
+
+Then, however it went:
+
+```sh
+npx @veris-ai/daytona teardown "$(echo "$box" | jq -r .daytonaSandboxId)"
+```
+
+`teardown` deletes the sandbox and says what it did about the twin: one this
+package created goes with it, one it attached to — always the case after
+`provision` — is yours and is left running. It exits 1 when there is no such
+sandbox, saying plainly that no twin was touched.
+
+Nothing deletes a provisioned box for you, so it comes up with its own brakes:
+it stops after 30 idle minutes, Daytona deletes it an hour after that, and it
+is destroyed 4 hours after creation whatever state it is in. The twin's TTL is
+untouched — it belongs to whoever created the twin.
 
 ### Why `assertTouched` and not just a green suite
 
@@ -100,6 +164,7 @@ when it is empty.
 | `getTrustEnv()` | the CA variables, as a map for a process you start |
 | `trustPrelude()` | the same variables, as one line of shell `export`s |
 | `patchBundledCas()` | append the Veris CA to the CA bundles your SDKs ship |
+| `environmentId` | the Veris environment the twin was deployed from |
 | `deliverTo(port \| url)` | point vendor webhooks back at your sandbox |
 
 `sbx.verisSandboxId` is the twin's id — not to be confused with `sbx.id`, which
@@ -131,7 +196,9 @@ console.log(await sbx.veris.patchBundledCas())   // ['…/stripe/data/ca-certifi
 
 Call it *after* installing dependencies — the bundles arrive with them. It is
 idempotent and returns only the files it changed. `veris-daytona run` calls it
-for you, between `--setup` and the command.
+for you, between `--setup` and the command; a sandbox from `provision` carries
+the same patcher as a script at `/tmp/veris-patch-bundled-cas.sh`, so whoever
+installed the dependencies can run it with no SDK in hand.
 
 ## Options
 

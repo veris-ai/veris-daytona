@@ -93,6 +93,31 @@ export function isVerisSandbox(sbx: Sandbox): sbx is VerisSandbox {
   return typeof (sbx as VerisSandbox).verisSandboxId === 'string'
 }
 
+/**
+ * The twin id stamped on this sandbox at create, if it has one.
+ *
+ * Read from the labels rather than from `sandbox.verisSandboxId`, so it answers
+ * for a sandbox whose Veris surface could NOT be rehydrated — no VERIS_API_KEY
+ * in the environment, say. That is exactly the case where a caller about to
+ * delete the sandbox needs telling that a twin exists and is out of reach.
+ */
+export function verisTwinId(sandbox: Sandbox): string | undefined {
+  return sandbox.labels?.[LABEL.twinId]
+}
+
+/**
+ * Does deleting this sandbox delete its twin too?
+ *
+ * True only for a twin this package created. A twin attached to with
+ * `veris.attachSandboxId` belongs to whoever made it and outlives the sandbox,
+ * and a sandbox with no twin at all has nothing to delete. This is the same
+ * label the wrapped `delete()` reads, so the two can never disagree.
+ */
+export function verisOwnsTwin(sandbox: Sandbox): boolean {
+  const labels = sandbox.labels ?? {}
+  return labels[LABEL.twinId] !== undefined && labels[LABEL.ownsTwin] !== 'false'
+}
+
 export class Daytona extends BaseDaytona {
   private readonly verisDefaults: VerisOpts
 
