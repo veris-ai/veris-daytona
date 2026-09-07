@@ -1,15 +1,17 @@
 // Reads of a twin service's own control plane that are not the receipt.
 //
 // Same shape and same reasoning as receipt.ts: these run HOST-SIDE, never from
-// inside the sandbox. The twin's host is kept off the sandbox's domainAllowList
-// wherever it can be, because a sandbox that can reach /veris/* can also reach
+// inside the sandbox. A sandbox that can reach /veris/* can also reach
 // /veris/reset — and an agent that can clear request history can make its own
-// receipt say anything.
-//
-// "Wherever it can be" is the honest version. A service with no vendor routes
-// has no hostname for the gateway to intercept, so its twin URL is the only way
-// to use it at all, and network.ts's directTwinHosts allows that host for
-// exactly those services. Nothing else allows it.
+// receipt say anything. The twin's host used to be kept off the sandbox's
+// Daytona allowlist for that reason; with Daytona pinned to the gateway's
+// address instead (see network.ts) the twin's public URL passes through the
+// gateway like any other public host, and the data plane's /veris/* routes
+// take no key (measured: GET /veris/requests and POST /veris/reset both 200
+// with no credential). Keeping the twin's control routes out of the
+// sandbox's reach is now the gateway's job, not this package's — the same
+// position @veris-ai/e2b has always been in. directTwinHosts names the twins a
+// sandbox must reach by their own URL (no vendor routes to intercept).
 import { VerisError } from './errors'
 import type { ServiceInfo } from './control-plane'
 import { isHttpUrl } from './network'

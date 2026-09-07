@@ -91,8 +91,8 @@ box=$(npx @veris-ai/daytona provision --sandbox sbx_a1b2c3 --image python:3.12)
 ```
 
 That creates a sandbox attached to a twin you already have, does every
-Veris-shaped thing — the egress credential, the allowlist and its 20-domain
-fit, the outbound proxy, the CA bundle, the canary, the trust variables — and
+Veris-shaped thing — the egress credential, the gateway pin, the outbound
+proxy, the CA bundle, the canary, the trust variables — and
 stops. Nothing is uploaded, nothing is run, nothing is deleted. One JSON object
 goes to stdout and every human line to stderr, so `$box` is parseable:
 
@@ -120,11 +120,7 @@ goes to stdout and every human line to stderr, so `$box` is parseable:
 |---|---|
 | `--sandbox <twin-id>` | the twin to attach to — **required**; `veris up` prints its id |
 | `--image <name>` / `--snapshot <name>` | what to run in; default is Daytona's default snapshot |
-| `--allow-out <host>` | extra hostname the sandbox may reach, repeatable |
 | `--env KEY=VALUE` | set as a sandbox environment variable, repeatable |
-
-Daytona's allowlist is fixed at create, so a later `push --repo` needs
-`--allow-out github.com` said here.
 
 From there the box is yours. Reading the receipt and deciding what it proved is
 the caller's job; that is the whole point of the split.
@@ -135,7 +131,7 @@ Daytona has no route into a box that already exists. Their CLI (v0.210.0) has no
 upload, copy or sync command; `daytona ssh` takes exactly one argument, so there
 is no `tar | ssh` and no scp or rsync behind it; `--context` is a Docker build
 context that only exists on `create`, which `provision` owns; and `git clone`
-inside the box needs the git host on an allowlist fixed at create. So two verbs
+inside the box is a clone, not an upload of what is on your disk. So two verbs
 do it:
 
 ```sh
@@ -253,9 +249,9 @@ installed the dependencies can run it with no SDK in hand.
 await daytona.create({
   image: 'node:22',
   veris: {
-    egress: 'strict',          // default. 'open' sets no allowlist — debugging only
-    allowOut: ['internal.corp'],
-    allowRegistries: true,     // default. npm, PyPI, apt, crates…
+    egress: 'strict',          // default: Daytona reaches only the gateway's address.
+                               // 'open': no Daytona allowlist, for a control plane
+                               // that has not published the gateway's addresses
     installCa: true,           // default
     ttlMinutes: 60,
     attachSandboxId: 'sbx_…',  // reuse an existing twin; delete() will not remove it
@@ -269,20 +265,21 @@ Coordinates can also come from `veris.apiKey` / `veris.environmentId` /
 
 ## How it works
 
-Every sandbox is created with two Daytona parameters: a `domainAllowList` (the
-vendor hostnames the twin answers for, the gateway, the twin's data planes, and
-package registries — nothing else leaves) and an `outboundProxyUrl` pointing at
-the Veris gateway over HTTP CONNECT.
+Every sandbox is created with two Daytona parameters: a `networkAllowList`
+holding the Veris gateway's IPv4 address as one `/32` and nothing else, and an
+`outboundProxyUrl` pointing at that gateway over HTTP CONNECT.
 
-Daytona chains them: sandbox traffic reaches Daytona's own proxy, which drops
-anything not allowlisted and forwards the rest to the gateway, which answers
-vendor hostnames from the twin. Nothing of ours runs inside the sandbox, which
-is why any image works.
+Daytona chains them: sandbox traffic reaches Daytona's own proxy, which forwards
+it to the gateway, which answers vendor hostnames from the twin and passes
+public hosts — registries, git, a routeless twin's own URL — through untouched.
+A process that ignores the proxy variables cannot dial out at all. Nothing of
+ours runs inside the sandbox, which is why any image works.
 
-The list also carries the twin's own host when a service can only be reached
-there — one with no vendor routes has no hostname for the gateway to intercept,
-so its twin URL is the only way in. Daytona caps the whole list at 20 domains,
-which a large environment fills; see the Limitations for what gives way.
+Daytona is pinned by address, never by a hostname list, because a
+`domainAllowList` set beside the proxy URL turns Daytona's egress into a
+TLS-inspecting proxy that rejects the gateway's certificate (measured; see the
+repository README). The address comes from the control plane's egress
+credential (`gateway_ips`); an older control plane gets one DNS lookup.
 
 Before `create()` resolves, a canary probe dials a reserved hostname only the
 gateway answers, whose body carries the twin id. It proves in one request that
@@ -320,11 +317,11 @@ four systems involved refused:
   `sbx.veris.patchBundledCas()` covers certifi, pip's vendored certifi,
   botocore, stripe and httplib2; anything else fails with its own error naming
   the file to add.
-- **Daytona allows 20 domains, and a large environment fills the list.** The
-  vendor hostnames, the gateway, the data planes and your `allowOut` are kept;
-  the default registries are trimmed from the tail to fit, and what was dropped
-  is printed. Required hosts alone exceeding 20 fails at `sandbox-create` with
-  the count and the knobs, rather than as a raw Daytona refusal.
+- **Strict mode needs the gateway's address.** It is read from the egress
+  credential (`gateway_ips`), else resolved once from the proxy host. When
+  neither yields an IPv4 address, `create()` fails at `credential-mint` naming
+  `veris.egress: 'open'`, which sets no Daytona allowlist and still blocks a
+  process that bypasses the proxy.
 - **`teardown` needs `delete:sandboxes` on the Daytona key.** A write-only
   key creates boxes it cannot delete; the refusal says when Daytona's own
   auto-stop and auto-delete will, and `provision` warns before creating one.

@@ -25,7 +25,7 @@ export async function systemPromptTransform(ctx: PluginInput, repoPath: string) 
         '## Veris Twin',
         "This sandbox intercepts configured vendor hostnames through its attached Veris twin.",
         'Keep production hostnames and client libraries; do not rewrite base URLs or add mocks.',
-        'The gateway and domain allowlist govern network access. Preserve those settings and',
+        'The gateway and its address allowlist govern network access. Preserve those settings and',
         "the receipt's reported mode, integrity and blind spots; do not claim every possible",
         'vendor request is isolated. A blocked destination may be outside this environment.',
         '',

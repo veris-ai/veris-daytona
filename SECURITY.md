@@ -11,15 +11,20 @@ vulnerability report.
 properties are load-bearing rather than incidental. If you find a way to break
 any of them, that is a vulnerability:
 
-- **A sandbox cannot reach a host outside its `domainAllowList`.** Enforcement
-  is Daytona's, at the network layer; this package only computes the list.
+- **A sandbox cannot dial anything but the Veris gateway's address.**
+  Enforcement is Daytona's `networkAllowList`, at the network layer; this
+  package only computes the pin. A process that ignores the proxy variables is
+  blocked, not let out.
 - **A vendor hostname on that list is answered by the Veris gateway, not by the
   real vendor.** The allowlist is not the boundary here — the gateway is. A path
   that reaches a real vendor API from inside a Veris sandbox is the highest
   severity thing in this repo.
 - **`receipt()` never reports traffic it cannot vouch for.** Every call
   re-runs the canary probe first; a receipt read from a sandbox whose egress was
-  detached must fail, not return counts.
+  detached must fail, not return counts. Known gap, not a vulnerability in this
+  package: the twin's own `/veris/*` routes pass through the gateway like any
+  public host and take no credential, so code running inside the sandbox can
+  call `/veris/reset` on its own twin. That guard belongs at the gateway.
 - **Control-plane responses are treated as untrusted input.** They are validated
   before reaching a URL, a shell command, or an environment variable — see
   `sanitizeTrustEnv`, `isSafeEnvName`, and the host/address checks in
@@ -30,7 +35,7 @@ any of them, that is a vulnerability:
 ## What it is not responsible for
 
 - The isolation of the Daytona sandbox itself, or Daytona's enforcement of
-  `domainAllowList` — report those to Daytona.
+  `networkAllowList` — report those to Daytona.
 - The twin's own behaviour, which is the Veris platform.
 - QUIC/HTTP3 and ECH, which the gateway does not intercept. These are reported
   in the receipt's `leaks` rather than silently omitted; that is a documented

@@ -35,10 +35,7 @@ export { isVerisSandbox, verisOwnsTwin, verisTwinId } from './daytona'
 export type { VerisApi, TouchMatcher, DeliverToOpts, VerisContext } from './veris-api'
 export type { Receipt, ReceiptEntry, ReceiptRequest, ReceiptLeak } from './receipt'
 export type { EgressMode, NetworkParams, NetworkPlan } from './network'
-export {
-  DAYTONA_DOMAIN_LIMIT, DEFAULT_REGISTRY_HOSTS,
-  vendorHosts, twinHosts, directTwinHosts, dataPlaneHosts,
-} from './network'
+export { buildNetwork, vendorHosts, twinHosts, directTwinHosts, dataPlaneHosts } from './network'
 export type { ServiceInfo as VerisServiceInfo, RouteEntry, TwinSandbox } from './control-plane'
 export { ControlPlane } from './control-plane'
 export {
@@ -46,7 +43,7 @@ export {
   BUNDLED_CA_FILES, BUNDLED_CA_PATCH_SCRIPT,
   nodeOptionsWithTrust, vendoredTrustEnv, trustPrelude,
 } from './trust'
-export { gatewayProxyUrl, patchBundledCas } from './gateway'
+export { gatewayIps, gatewayProxyUrl, patchBundledCas } from './gateway'
 export {
   DEFAULT_API_BASE, profilePath, resolveVerisCredentials, requireVerisCredentials, missingKeyMessage,
 } from './profile'

@@ -195,6 +195,7 @@ describe('create() cleans up after a build that failed', () => {
           socks_address: 'gw.test:1080', connect_address: 'gw.test:8443',
           http_proxy_url: 'http://u:p@gw.test:8443',
           username: 'u', password: 'p', ca_pem: 'PEM', canary_host: 'canary.test',
+          gateway_ips: ['203.0.113.9'],
         }
         : u.includes('/veris/requests') ? { requests: [] }
         : twin
@@ -204,6 +205,29 @@ describe('create() cleans up after a build that failed', () => {
   }
 
   afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks() })
+
+  it('pins Daytona to the gateway address and never hands it a hostname list', async () => {
+    controlPlane()
+    let params: Record<string, unknown> = {}
+    vi.spyOn(BaseDaytona.prototype, 'create').mockImplementation(async (p?: unknown) => {
+      params = p as Record<string, unknown>
+      throw SDK_ERROR
+    })
+    vi.spyOn(BaseDaytona.prototype, 'list').mockImplementation(() => (async function* () {})() as never)
+
+    const daytona = new Daytona({
+      apiKey: 'dtn_key', useDeprecatedPolling: true,
+      veris: { apiKey: 'veris_key', environmentId: 'env_1', apiBase: 'https://api.veris.test' },
+    })
+    await daytona.create({ image: 'x' }).catch(() => undefined)
+
+    expect(params.networkAllowList).toBe('203.0.113.9/32')
+    expect(params).not.toHaveProperty('domainAllowList')
+    expect(params.outboundProxyUrl).toBe('http://u:p@gw.test:8443')
+    // Node ignores the proxy variables unless told to, and Daytona blocks a
+    // direct dial, so this is what lets plain https.get/fetch reach the gateway.
+    expect((params.envVars as Record<string, string>).NODE_USE_ENV_PROXY).toBe('1')
+  })
 
   it('deletes the leaked sandbox and names the reason Daytona recorded', async () => {
     const calls = controlPlane()

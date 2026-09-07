@@ -52,6 +52,10 @@ export interface EgressCredential {
   expires_at?: string
   /** Server-served CA trust env map; the SDK's vendored list is the fallback. */
   trust_env?: Record<string, string>
+  /** IPv4 addresses the gateway listens on — what strict mode pins Daytona's
+   *  networkAllowList to. Absent on a control plane that predates the field;
+   *  the SDK then resolves the proxy host itself, once. */
+  gateway_ips?: string[]
 }
 
 /**

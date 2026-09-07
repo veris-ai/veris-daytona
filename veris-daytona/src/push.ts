@@ -65,8 +65,8 @@ its \`ssh\` takes no remote command, and \`--context\` is a build context on
 \`create\` only.
 
 needs: DAYTONA_API_KEY. GITHUB_TOKEN or GH_TOKEN is used for a private --repo.
-A clone runs inside the sandbox, so the git host must be on the allowlist the
-sandbox was created with — \`provision --allow-out github.com\`.
+A clone runs inside the sandbox and reaches the git host through the Veris
+gateway, which passes public hosts through.
 
 exit code: 0 when the code is in the sandbox; 1 when there is no such sandbox.`
 

@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DAYTONA_DOMAIN_LIMIT,
-  DEFAULT_REGISTRY_HOSTS,
   buildNetwork,
   dataPlaneEnv,
   dataPlaneHosts,
@@ -11,6 +9,7 @@ import {
   vendorHosts,
 } from '../../src/network'
 import { gatewayProxyUrl } from '../../src/gateway'
+import { VerisError } from '../../src/errors'
 import type { ServiceInfo } from '../../src/control-plane'
 
 const svc = (over: Partial<ServiceInfo>): ServiceInfo => ({
@@ -20,15 +19,6 @@ const svc = (over: Partial<ServiceInfo>): ServiceInfo => ({
   routes: [{ host: 'api.stripe.com' }],
   ...over,
 })
-
-const GATEWAY = ['gw.api.veris.ai']
-
-/** The Daytona params alone, for the cases that are not about the cap. */
-const plan = (args: Parameters<typeof buildNetwork>[0]) => buildNetwork(args).params
-
-/** n services, each claiming its own vendor host — the shape that fills the cap. */
-const manyServices = (n: number): ServiceInfo[] =>
-  Array.from({ length: n }, (_, i) => svc({ name: `svc${i}`, routes: [{ host: `api.vendor${i}.com` }] }))
 
 describe('vendorHosts', () => {
   it('collects every route host, sorted and deduped', () => {
@@ -40,140 +30,55 @@ describe('vendorHosts', () => {
 })
 
 describe('buildNetwork', () => {
-  it('ALLOWS the vendor hostnames, so Daytona forwards them to the gateway', () => {
-    // Reads backwards until you follow the path. Sandbox traffic goes to
-    // Daytona's proxy, which drops anything unlisted and forwards the rest to
-    // the gateway. A vendor host that is absent never reaches the gateway and
-    // never reaches the twin — it is simply blocked. Allowing it is not a leak,
-    // because the gateway, not the allowlist, is what stands between the
-    // sandbox and the real vendor.
-    const net = plan({ services: [svc({})], mode: 'strict', gatewayHosts: GATEWAY })
-    expect(net.domainAllowList!.split(',')).toContain('api.stripe.com')
+  it('pins Daytona to the gateway address, one /32 per IP', () => {
+    expect(buildNetwork({ mode: 'strict', gatewayIps: ['136.64.238.87'] }).params)
+      .toEqual({ networkAllowList: '136.64.238.87/32' })
+    expect(buildNetwork({ mode: 'strict', gatewayIps: ['136.64.238.87', '34.42.156.165', '136.64.238.87'] }).params)
+      .toEqual({ networkAllowList: '136.64.238.87/32,34.42.156.165/32' })
   })
 
-  it('allows the gateway itself, and the registries', () => {
-    const net = plan({ services: [svc({})], mode: 'strict', gatewayHosts: GATEWAY })
-    const allowed = net.domainAllowList!.split(',')
-    expect(allowed).toContain('gw.api.veris.ai')
-    expect(allowed).toContain('registry.npmjs.org')
-    expect(allowed).toContain('pypi.org')
+  it('NEVER hands Daytona a hostname list', () => {
+    // Measured: a domainAllowList beside outboundProxyUrl turns Daytona's
+    // egress into a TLS-inspecting proxy, which rejects the gateway's leaf and
+    // answers every vendor call with 502. The vendor hostnames, the gateway
+    // host, registries — none of it may reappear as a domain list.
+    const params = buildNetwork({ mode: 'strict', gatewayIps: ['136.64.238.87'] }).params as Record<string, unknown>
+    expect(params).not.toHaveProperty('domainAllowList')
+    expect(params).not.toHaveProperty('networkBlockAll')
   })
 
-  it('without the gateway host, nothing could reach the twin at all', () => {
-    const net = plan({ services: [svc({})], mode: 'strict', gatewayHosts: [] })
-    expect(net.domainAllowList!.split(',')).not.toContain('gw.api.veris.ai')
+  it('open mode sets no allowlist at all', () => {
+    expect(buildNetwork({ mode: 'open', gatewayIps: [] }).params).toEqual({})
   })
 
-  it('drops the registries when asked, for a twin-only sandbox', () => {
-    const net = plan({
-      services: [svc({})], mode: 'strict', gatewayHosts: GATEWAY, allowRegistries: false,
-    })
-    const allowed = net.domainAllowList!.split(',')
-    for (const host of DEFAULT_REGISTRY_HOSTS) expect(allowed).not.toContain(host)
-    expect(allowed).toContain('api.stripe.com')
+  it('refuses strict mode when nothing named the gateway address, and says what to do', () => {
+    let err: unknown
+    try { buildNetwork({ mode: 'strict', gatewayIps: [] }) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(VerisError)
+    expect((err as VerisError).phase).toBe('credential-mint')
+    expect((err as VerisError).message).toContain('gateway_ips')
+    expect((err as VerisError).message).toContain("veris.egress: 'open'")
   })
 
-  it('splices in the data plane hosts a DSN names', () => {
-    const net = plan({
-      services: [svc({ name: 'db', url: 'postgres://u:p@pg-abc.twin.veris.ai:5432/app', env_hint: 'DATABASE_URL', routes: [] })],
-      mode: 'strict', gatewayHosts: GATEWAY,
-    })
-    expect(net.domainAllowList!.split(',')).toContain('pg-abc.twin.veris.ai')
-  })
-
-  it('carries the caller`s extra allowances', () => {
-    const net = plan({
-      services: [svc({})], mode: 'strict', gatewayHosts: GATEWAY, allowOut: ['internal.corp'],
-    })
-    expect(net.domainAllowList!.split(',')).toContain('internal.corp')
-  })
-
-  it('open mode sets NO allowlist, which is why it is not the default', () => {
-    const net = plan({ services: [svc({})], mode: 'open', gatewayHosts: GATEWAY })
-    expect(net.domainAllowList).toBeUndefined()
-  })
-
-  it('never sets networkBlockAll, which would also block the twin', () => {
-    const net = plan({ services: [svc({})], mode: 'strict', gatewayHosts: GATEWAY })
-    expect(net.networkBlockAll).toBeUndefined()
-  })
-})
-
-describe('buildNetwork stays under Daytona`s cap', () => {
-  // Measured: a seven-service environment plus the default registries built 28
-  // entries, and create() was refused outright with "Domain allow list cannot
-  // contain more than 20 domains" — a first user's very first call, failing on
-  // a constraint this SDK could see coming.
-  it('never emits more domains than Daytona accepts', () => {
-    const net = plan({ services: manyServices(9), mode: 'strict', gatewayHosts: GATEWAY })
-    expect(net.domainAllowList!.split(',').length).toBeLessThanOrEqual(DAYTONA_DOMAIN_LIMIT)
-  })
-
-  it('spends the room on the twin before the registries, and names what it dropped', () => {
-    const built = buildNetwork({ services: manyServices(9), mode: 'strict', gatewayHosts: GATEWAY })
-    const allowed = built.params.domainAllowList!.split(',')
-    for (let i = 0; i < 9; i++) expect(allowed).toContain(`api.vendor${i}.com`)
-    expect(allowed).toContain('gw.api.veris.ai')
-    // Trimmed from the tail of DEFAULT_REGISTRY_HOSTS, which is ordered by value.
-    expect(built.droppedRegistries.length).toBeGreaterThan(0)
-    expect(built.droppedRegistries).toContain('ghcr.io')
-    expect(allowed).toContain('registry.npmjs.org')
-    for (const host of built.droppedRegistries) expect(allowed).not.toContain(host)
-  })
-
-  it('drops nothing when everything fits', () => {
-    expect(buildNetwork({ services: [svc({})], mode: 'strict', gatewayHosts: GATEWAY }).droppedRegistries)
-      .toEqual([])
-  })
-
-  it('refuses, naming the cap, when the required hosts alone exceed it', () => {
-    // The one case trimming cannot resolve: these are the hosts the twin does
-    // not work without. Failing here beats shipping a half allowlist that
-    // fails later as an unexplained 403 mid-run.
-    expect(() => buildNetwork({ services: manyServices(25), mode: 'strict', gatewayHosts: GATEWAY }))
-      .toThrow(/needs 26 allowlist entries and Daytona accepts 20/)
-    expect(() => buildNetwork({ services: manyServices(25), mode: 'strict', gatewayHosts: GATEWAY }))
-      .toThrow(/veris.egress: 'open'/)
-  })
-
-  it('attributes that refusal to sandbox-create', () => {
-    expect(() => buildNetwork({ services: manyServices(25), mode: 'strict', gatewayHosts: GATEWAY }))
-      .toThrow(expect.objectContaining({ phase: 'sandbox-create' }))
-  })
-
-  it('leaves github.com to the twin that claims it', () => {
-    // github.com is a vendor host, not a registry: the platform's route table
-    // maps it to the github twin, and the gateway resolves that table for every
-    // sandbox. In an environment WITHOUT a github twin the gateway still forges
-    // a leaf for it and then dials a pod that does not exist — measured as an
-    // empty reply to every request, which broke uv's CPython download.
-    expect(DEFAULT_REGISTRY_HOSTS).not.toContain('github.com')
-    const withTwin = plan({
-      services: [svc({ name: 'github', routes: [{ host: 'github.com' }] })],
-      mode: 'strict', gatewayHosts: GATEWAY,
-    })
-    expect(withTwin.domainAllowList!.split(',')).toContain('github.com')
+  it('refuses an address that is not IPv4, which Daytona`s CIDR list cannot take', () => {
+    expect(() => buildNetwork({ mode: 'strict', gatewayIps: ['2001:db8::1'] })).toThrow(/not IPv4/)
+    expect(() => buildNetwork({ mode: 'strict', gatewayIps: ['gw.api.veris.ai'] })).toThrow(/not IPv4/)
+    expect(() => buildNetwork({ mode: 'strict', gatewayIps: ['999.1.1.1'] })).toThrow(/not IPv4/)
   })
 })
 
 describe('directTwinHosts', () => {
-  // Measured: the twin URL services() hands you was on no allowlist, so a
-  // routeless twin (yente) was unreachable from inside the sandbox — the URL
-  // resolved, the connection was refused, and the twin could not be used at all.
-  it('allows the twin`s own host for a service with no vendor routes', () => {
-    const net = plan({
-      services: [svc({ name: 'yente', url: 'https://svc.veris.ai/s/t1/yente', control_url: 'https://svc.veris.ai/s/t1/yente', routes: [] })],
-      mode: 'strict', gatewayHosts: GATEWAY,
-    })
-    expect(net.domainAllowList!.split(',')).toContain('svc.veris.ai')
+  // A routeless twin (yente) has no hostname for the gateway to intercept, so
+  // its own URL is the only way in; it travels through the gateway like any
+  // other public host, and this is how a caller learns which hosts those are.
+  it('names the twin`s own host for a service with no vendor routes', () => {
+    expect(directTwinHosts([
+      svc({ name: 'yente', url: 'https://svc.veris.ai/s/t1/yente', control_url: 'https://svc.veris.ai/s/t1/yente', routes: [] }),
+    ])).toEqual(['svc.veris.ai'])
   })
 
-  it('does NOT allow it for a service the gateway intercepts by hostname', () => {
-    // That host also serves /veris/reset, which clears the log the receipt is
-    // read from, so it is allowed only where nothing else can work.
+  it('does NOT name it for a service the gateway intercepts by hostname', () => {
     expect(directTwinHosts([svc({})])).toEqual([])
-    const net = plan({ services: [svc({})], mode: 'strict', gatewayHosts: GATEWAY })
-    expect(net.domainAllowList!.split(',')).not.toContain('stripe-abc.twin.veris.ai')
   })
 
   it('ignores a DSN service, which is reached through its data plane', () => {

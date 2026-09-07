@@ -121,7 +121,6 @@ async function run(opts: RunOptions): Promise<number> {
     veris: {
       environmentId: opts.environment,
       attachSandboxId: opts.sandbox,
-      allowOut: opts.allowOut,
       ttlMinutes,
     },
   } as Parameters<Daytona['create']>[0], { timeout: 300 })
@@ -236,7 +235,6 @@ async function provision(opts: ProvisionOptions): Promise<number> {
     autoDeleteInterval: AUTO_DELETE_MINUTES,
     veris: {
       attachSandboxId: opts.sandbox,
-      allowOut: opts.allowOut,
       // The Daytona box's wall-clock backstop. It does not move the twin's own
       // TTL: an attached twin is never created here, so its life was already
       // decided by whoever made it.

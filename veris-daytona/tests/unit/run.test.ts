@@ -26,11 +26,10 @@ describe('parseRunArgs', () => {
   it('collects repeatable flags and env pairs', () => {
     const o = parseRunArgs([
       '--require-service', 'stripe', '--require-service', 'github',
-      '--allow-out', 'internal.corp', '--env', 'A=1', '--env', 'B=x=y', '--keep', '--timeout', '90',
+      '--env', 'A=1', '--env', 'B=x=y', '--keep', '--timeout', '90',
       '--', 'make', 'test',
     ])
     expect(o.requireService).toEqual(['stripe', 'github'])
-    expect(o.allowOut).toEqual(['internal.corp'])
     expect(o.env).toEqual({ A: '1', B: 'x=y' })
     expect(o.keep).toBe(true)
     expect(o.timeoutSeconds).toBe(90)
