@@ -1,12 +1,12 @@
 // Run with Bun, the OpenCode plugin runtime, against the clean installation
-// reported by test:pack. The skills tarball is installed separately into it.
+// reported by test:packages. The skills tarball is installed separately into it.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 const stage = process.env.VERIS_PACK_STAGE
-if (!stage) throw new Error('Set VERIS_PACK_STAGE to the clean install from npm run test:pack')
+if (!stage) throw new Error('Set VERIS_PACK_STAGE to the clean install from npm run test:packages')
 process.env.XDG_DATA_HOME = join(stage, 'xdg')
 const provider = JSON.parse(readFileSync('package.json')).name.includes('daytona') ? 'daytona' : 'e2b'
 const providerDir = join(stage, 'node_modules/@veris-ai', `${provider}-opencode`)

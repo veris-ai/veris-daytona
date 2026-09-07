@@ -33,7 +33,7 @@ response/state evidence gates. No canonical skill files were edited or copied he
   control/probe-only pages, lower bounds, malformed/failed reads, resets (including
   during paging), replaced sessions/services, token session binding, discovery,
   write denial and preserved explicit/scalar/wildcard user configuration.
-- `npm run test:pack`: inspect and install both exact tarballs into a clean temp
+- `npm run test:packages`: inspect and install both exact tarballs into a clean temp
   directory, with no workspace links. Verify public SDK import/version, compiled
   plugin tools, no bundled node_modules, and package size under the release limit.
 - The packed CLI declares `veris-daytona`, includes executable `dist/cli.js`,
@@ -53,7 +53,7 @@ logic; they are not live application evidence.
 After the normal `npm ci`, build, typecheck and unit tests:
 
 ```sh
-npm run test:pack
+npm run test:packages
 # Use PACK_STAGE printed by that test and the reviewed skills release artifact:
 npm install --prefix <PACK_STAGE> --ignore-scripts <reviewed-skills.tgz>
 VERIS_PACK_STAGE=<PACK_STAGE> bun scripts/test-composition.mjs
