@@ -32,6 +32,7 @@ import { gatewayProxyUrl, installCa, probeCanary } from './gateway'
 import { MissingCredentialsError, VerisError, VerisGatewayNotOfferedError } from './errors'
 import { requireVerisCredentials, resolveVerisCredentials } from './profile'
 import { SDK_VERSION } from './version'
+import { refreshCaBundle, refreshTrustAfterStart } from './ca-bundle'
 
 export interface VerisOpts {
   /** Veris API key. Falls back to process.env.VERIS_API_KEY, then to the
@@ -301,7 +302,9 @@ export class Daytona extends BaseDaytona {
    */
   override async get(sandboxIdOrName: string): Promise<Sandbox> {
     const sandbox = await super.get(sandboxIdOrName)
-    return this.rehydrate(sandbox)
+    const attached = this.rehydrate(sandbox)
+    if (isVerisSandbox(attached) && attached.state === 'started') await refreshCaBundle(attached)
+    return attached
   }
 
   /** Same rehydration for the sandboxes a list() streams. */
@@ -394,6 +397,7 @@ export class Daytona extends BaseDaytona {
     // tear the twin down twice. Only the prototype's delete is ever wrapped.
     if (isVerisSandbox(sandbox)) return sandbox
 
+    refreshTrustAfterStart(sandbox)
     const veris = new VerisApiImpl({ ...ctx, sandbox })
     const originalDelete = sandbox.delete.bind(sandbox)
 

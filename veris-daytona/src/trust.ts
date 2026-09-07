@@ -12,36 +12,14 @@ export const SYSTEM_BUNDLE = '/etc/ssl/certs/ca-certificates.crt'
 /** Our CA alone, world-readable, written before anything needs it. */
 export const VERIS_CA_FILE = '/tmp/veris-ca.crt'
 
-/**
- * The public roots plus ours, concatenated by us.
- *
- * Every path-valued trust var points here rather than at SYSTEM_BUNDLE, because
- * `update-ca-certificates` is not always present — Daytona's default image does
- * not ship it — and a var pointing at a bundle that was never rebuilt trusts
- * everything except the one CA that matters. We write this file ourselves, so
- * it is correct whether or not the distribution has the tooling.
- */
+/** Current system/public roots, provider trust and Veris CA, merged by us.
+ * The provider may mount its roots separately from the system trust store. */
 export const VERIS_BUNDLE = '/tmp/veris-ca-bundle.crt'
 
-/**
- * The trust variables injected into every sandbox at create time.
- *
- * This is the load-bearing half of CA trust: the gateway forges a leaf for each
- * vendor hostname, and a client that does not trust the Veris CA rejects it, so
- * without these (or the store install below) every HTTPS vendor call fails on
- * certificate validation.
- *
- * Every var is path-valued and points at VERIS_BUNDLE (public roots + ours, so
- * passthrough hosts keep verifying) — NODE_EXTRA_CA_CERTS included. That var is
- * additive, but only to Node's BAKED-IN Mozilla roots, never to the system
- * store — and on Daytona the leaf a client actually validates is signed by
- * Daytona's proxy CA (its proxy terminates TLS; see installCa's comment), which
- * lives in the system store and nowhere in Mozilla's roots. Point Node at the
- * single Veris cert and it can verify neither that leaf nor a directly served
- * gateway one behind it: UNABLE_TO_VERIFY_LEAF_SIGNATURE on every vendor call.
- * The bundle carries the system store (Daytona's CA with it) plus ours, so it
- * is the one file that works in both worlds.
- */
+/** Trust defaults injected at creation. Daytona can override some of these
+ * with its own mounted bundle. Our bundle includes that provider trust too,
+ * for clients that retain these defaults or select the bundle explicitly.
+ * NODE_EXTRA_CA_CERTS adds to Node's built-in roots when a process starts. */
 export function vendoredTrustEnv(): Record<string, string> {
   return {
     SSL_CERT_FILE: VERIS_BUNDLE,

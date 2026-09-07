@@ -369,3 +369,24 @@ retain application response/state assertions. Preserve mode, integrity and leaks
 `{data: {table: [rows]}}` envelope, including fault rows. Coordinates come from the
 attached twin; lifecycle and arbitrary URLs are excluded. SDK callers own write
 authorization; the OpenCode plugin applies its configured write permission.
+
+## CA trust across restarts
+
+The SDK builds `/tmp/veris-ca-bundle.crt` from the current system roots,
+Daytona's provider CA bundle, effective CA environment paths, and the Veris CA.
+It preserves Daytona's files and replaces its own bundle atomically, removing
+exact duplicate PEM certificates. This includes provider roots that are not
+present in the system trust store.
+
+The bundle is rebuilt during creation, after successful `start()` and
+`recover()` calls on Veris sandbox objects, and when `get()` reconnects to a
+running Veris sandbox. A stopped sandbox is refreshed when started. These are
+local file operations, with no additional network canary or per-command checks.
+Restart through this SDK, or call its `get()` after a restart elsewhere.
+Already-running application processes may need restarting to reload trust.
+
+Refresh uses the stored Veris CA, falling back to its installed system drop-in
+if its temporary file is gone. If both are missing, recreate the sandbox.
+This does not renew Veris credentials or repair gateway forwarding failures.
+Clients with private CA stores still need the existing trust helpers
+(or their explicit CA configuration).

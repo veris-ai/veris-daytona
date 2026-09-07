@@ -11,9 +11,10 @@
 // tunnel is actually live before anyone trusts a receipt.
 import type { Sandbox } from '@daytona/sdk'
 import { ReceiptIntegrityError, SnapshotUnsupportedError, VerisError } from './errors'
+import { refreshCaBundle } from './ca-bundle'
 import {
   BUNDLED_CA_PATCHED_MARKER, BUNDLED_CA_PATCH_SCRIPT, CA_CERT_PATH, CA_INSTALL_CMD,
-  SYSTEM_BUNDLE, VERIS_BUNDLE, VERIS_CA_FILE, bundledCaPatchScript,
+  VERIS_BUNDLE, VERIS_CA_FILE, bundledCaPatchScript,
 } from './trust'
 
 /** A canary hostname must look like a hostname before it goes in a shell command. */
@@ -93,35 +94,9 @@ function assertProxyUrl(raw: string): string {
   return raw
 }
 
-/**
- * Make the gateway's CA trusted, without requiring anything of the image.
- *
- * Defensive rather than load-bearing on Daytona today, and the distinction is
- * worth recording. Daytona's own proxy terminates TLS with a certificate signed
- * by ITS CA — already trusted in the image — and re-originates to the gateway,
- * so the client never validates our forged leaf. Verified: a vendor call
- * succeeds with --cacert naming only Daytona's CA.
- *
- * We install ours regardless, because the day Daytona tunnels CONNECT
- * end-to-end (the ordinary behaviour for an HTTP proxy) the gateway's leaf
- * reaches the client directly and nothing works without it. One upload and one
- * shell command against a total outage is a trade worth making.
- *
- * The obvious approach — drop the cert in /usr/local/share/ca-certificates and
- * run update-ca-certificates — needs root AND that tool, and Daytona's default
- * image has neither. So the artefact is a bundle we build ourselves at a
- * world-writable path: the distribution's roots (when it has any) plus ours.
- *
- * Daytona overrides the best-known trust variables with its own CA, correctly
- * for its proxy. The dozen it does not set still point at this bundle, which
- * carries both CAs and every public root — so those tools verify rather than
- * break. Node is the exception that makes ours load-bearing today: it ignores
- * HTTPS_PROXY, is forwarded end to end, and validates OUR leaf with Daytona's
- * file. Its file is read-only, so the store install above is what carries
- * Node: NODE_TRUST_FLAG makes Node read the directory that install fills.
- *
- * The system-store install still runs when it can, for anything that reads the
- * store directly rather than honouring the variables. It is best-effort.
+/** Install Veris material and merge the provider's active trust bundle.
+ * Provider roots can live on a separate mount, outside the distribution store.
+ * Store installation remains best effort for clients that read it directly.
  */
 export async function installCa(sandbox: Sandbox, caPem: string): Promise<void> {
   await sandbox.fs.uploadFile(Buffer.from(caPem, 'utf8'), VERIS_CA_FILE)
@@ -134,11 +109,6 @@ export async function installCa(sandbox: Sandbox, caPem: string): Promise<void> 
 
   const script = [
     `chmod 0644 ${VERIS_CA_FILE}`,
-    // Public roots first so they keep working; ours appended. `cat` of a
-    // missing file is tolerated — an image with no roots at all still gets a
-    // bundle containing the one CA that matters here.
-    `{ cat ${SYSTEM_BUNDLE} 2>/dev/null; cat ${VERIS_CA_FILE}; } > ${VERIS_BUNDLE}`,
-    `chmod 0644 ${VERIS_BUNDLE}`,
     // Best-effort, for the stacks that read a store rather than a variable:
     // the system bundle, the JVM truststore, and NSS databases. All of it needs
     // root and tooling that may not be there, so none of it is load-bearing —
@@ -147,10 +117,10 @@ export async function installCa(sandbox: Sandbox, caPem: string): Promise<void> 
     `SUDO=; [ "$(id -u)" = 0 ] || SUDO="sudo -n"`,
     `($SUDO install -m 0644 -D ${VERIS_CA_FILE} ${CA_CERT_PATH} 2>/dev/null && ` +
       `$SUDO sh -c ${shellQuote(CA_INSTALL_CMD)} 2>/dev/null) || true`,
-    // The bundle is the load-bearing one: fail loudly if it is not there.
-    `[ -s ${VERIS_BUNDLE} ] && echo __VERIS_CA_OK__`,
+    `echo __VERIS_CA_OK__`,
   ].join('; ')
 
+  await refreshCaBundle(sandbox)
   const r = await sh(sandbox, script, 120).catch((e: unknown) => ({ exitCode: 1, result: String(e) }))
   if (!(r.result ?? '').includes('__VERIS_CA_OK__')) {
     throw new SnapshotUnsupportedError(
