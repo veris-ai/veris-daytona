@@ -21,7 +21,10 @@ any of them, that is a vulnerability:
   severity thing in this repo.
 - **`receipt()` never reports traffic it cannot vouch for.** Every call
   re-runs the canary probe first; a receipt read from a sandbox whose egress was
-  detached must fail, not return counts.
+  detached must fail, not return counts. Known gap, not a vulnerability in this
+  package: the twin's own `/veris/*` routes pass through the gateway like any
+  public host and take no credential, so code running inside the sandbox can
+  call `/veris/reset` on its own twin. That guard belongs at the gateway.
 - **Control-plane responses are treated as untrusted input.** They are validated
   before reaching a URL, a shell command, or an environment variable — see
   `sanitizeTrustEnv`, `isSafeEnvName`, and the host/address checks in
