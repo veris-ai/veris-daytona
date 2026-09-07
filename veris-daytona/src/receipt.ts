@@ -60,7 +60,6 @@ export interface Receipt {
   leaks: ReceiptLeak[]
 }
 
-
 export interface RawRow extends ReceiptRequest {
   [key: string]: unknown
 }

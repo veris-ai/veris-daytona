@@ -1,7 +1,7 @@
 // Run after build. Packs and installs the exact sibling artifacts in a new
 // directory: workspace links must not hide a missing entrypoint/dependency.
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -36,8 +36,9 @@ if (provider === 'daytona') {
   const cleanEnv = { ...process.env }
   for (const key of Object.keys(cleanEnv)) if (/^(VERIS_|DAYTONA_|E2B_)/.test(key)) delete cleanEnv[key]
   for (const verb of ['provision', 'push', 'exec', 'teardown']) {
-    const help = run(join(stage, 'node_modules/.bin/veris-daytona'), [verb, '--help'], { cwd: stage, env: cleanEnv })
-    assert.match(help, new RegExp(`veris-daytona ${verb}`))
+    const result = spawnSync(join(stage, 'node_modules/.bin/veris-daytona'), [verb, '--help'], { cwd: stage, env: cleanEnv, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout + result.stderr, new RegExp(`veris-daytona ${verb}`))
     console.log(`clean install: veris-daytona ${verb} --help passed`)
   }
 } else assert.equal(pkg.bin, undefined, 'E2B remains SDK-only')

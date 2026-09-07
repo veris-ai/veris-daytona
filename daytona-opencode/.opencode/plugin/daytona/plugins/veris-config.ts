@@ -48,6 +48,11 @@ const TOOL_PERMISSIONS: Record<string, 'ask' | 'deny'> = {
 
 const DEFAULT_API_BASE = 'https://svc.api.veris.ai'
 
+function hasPermission(permission: Record<string, unknown>, tool: string): boolean {
+  return Object.keys(permission).some(pattern =>
+    new RegExp('^' + pattern.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$').test(tool))
+}
+
 export async function verisConfig(cfg: OpencodeConfig): Promise<void> {
   try {
     // No key, no registration. Registering with an empty header instead would
@@ -57,7 +62,7 @@ export async function verisConfig(cfg: OpencodeConfig): Promise<void> {
     if (!apiKey) {
       if (typeof cfg.permission !== 'string') {
         const permission = (cfg.permission ??= {}) as Record<string, unknown>
-        if (!Object.keys(permission).some(key => key.includes('*'))) permission.verisControlWrite ??= 'ask'
+        if (!hasPermission(permission, 'verisControlWrite')) permission.verisControlWrite ??= 'ask'
       }
       return
     }
@@ -80,9 +85,7 @@ export async function verisConfig(cfg: OpencodeConfig): Promise<void> {
     if (typeof cfg.permission === 'string') return
     const permission = (cfg.permission ??= {}) as Record<string, unknown>
     for (const [tool, action] of Object.entries(TOOL_PERMISSIONS)) {
-      const configured = Object.keys(permission).some(pattern =>
-        new RegExp('^' + pattern.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$').test(tool))
-      if (!configured) permission[tool] ??= action
+      if (!hasPermission(permission, tool)) permission[tool] ??= action
     }
   } catch (err) {
     logger.warn(`[veris] MCP registration skipped: ${err instanceof Error ? err.message : String(err)}`)

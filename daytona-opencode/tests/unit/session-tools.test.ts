@@ -59,8 +59,6 @@ describe('native session tools', () => {
     expect(rendered.services.stripe).toMatchObject({ requests: 60, countKind: 'exact', omittedEntries: 10 })
     f.failReads()
     await expect(f.receipt.execute({ baseline: b }, ctx())).rejects.toThrow(/read failed/)
-    const capped = trace(21000)
-    capped.rows.forEach(r => r.tier = 'control')
     const g = fixture(); trace(21000).rows.forEach(r => r.tier = 'control')
     expect(JSON.parse(await g.receipt.execute({}, ctx())).services.stripe).toMatchObject({ requests: 0, countKind: 'at-least', complete: false })
   })

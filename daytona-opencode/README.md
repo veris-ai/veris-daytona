@@ -23,52 +23,64 @@ Then `opencode`. No image to build, no network configuration, nothing to start.
 
 ## What the agent gets
 
-The ten sandbox-backed tools from [`@daytona/opencode`](https://www.npmjs.com/package/@daytona/opencode)
-— bash, read, write, edit, multiedit, ls, glob, grep, getPreviewURL, gitSync —
-plus two, and the Veris MCP server.
+Remote `bash`, `read`, `write`, `edit`, `multiedit`, `ls`, `glob`, `grep`,
+`getPreviewURL`, and `gitSync`, plus the session tools below.
 
-**`verisReceipt`** reports what the twin *received*.
+**`verisTwin`** returns JSON with `provider`, `sessionId`, execution `sandboxId`,
+`twinId`, `environmentId`, `workingDirectory`, `lifecycleOwner`, `twinOwnership`,
+service routes/control URLs and available capabilities. It lists services even
+when the request log is empty. Pass `service` to read its manual. Verify remote
+`pwd` and `git rev-parse HEAD`; a stored path does not prove source sync succeeded.
 
-```
-Veris receipt — twin sbx_a1b2c3
-  interception: gateway   integrity: verified
+**`verisReceipt`** has two actions:
 
-1 request(s) reached the twin:
-  stripe: 1 request(s)
-    POST /v1/charges -> 200
-```
+1. Finish seeding/probes and background work. Call `{"action":"baseline"}` before
+   the isolated application test. Save the returned opaque `baseline` token.
+2. Run and await that application command through `bash`, preserving TLS/network
+   settings and recording its command, exit status and response/state assertions.
+3. Call `{"action":"read","baseline":"<returned-token>","service":"stripe"}`.
+   Omit `service` for all HTTP control services. Twin, sandbox and OpenCode session
+   identity, interception mode, integrity and blind spots remain in every result.
 
-Receipts are bounded views of the twin's request log, including earlier work and
-control traffic. Take a baseline and read again after the application's own flow;
-a nonzero total alone does not prove that flow ran. The full view shows at most
-20 entries per service; the service-filtered view shows at most 50 and omits the
-twin id. At zero total traffic, the full view omits service names as well; use
-`verisTwin` to discover them. Keep response/state assertions and obtain raw trace
-data when the summary cannot attribute new requests.
+Without a token the result is explicitly `scope: "cumulative"`, not current-run
+proof. Baselines pin per-service request IDs and a unique read-only schema request
+in the trace; reset, removed history, changed service coordinates or replacement
+sessions invalidate them. A restart or eviction of an old token requires a new
+baseline **before** rerunning the test. Services must retain control request headers;
+an unsupported trace format fails baseline capture rather than pretending it is empty.
 
-A successful application exit needs matching twin evidence. For example, an empty
-service log leaves arrival unproven:
+The SDK paginates up to 20 pages of 1,000 rows, within a newest-ID snapshot. It
+filters control/reserved paths and explicitly marked probe tiers. A complete
+zero means no application entries were observed in that window. Failed reads
+throw; page budgets, stalled pagination and failures after partial progress set
+`complete: false`, `countKind: "at-least"` and `incompleteReason`. Never subtract
+two cumulative counts. The display includes at most 50 entries per service and
+reports `omittedEntries`; this is separate from an incomplete underlying read.
+Use `verisControl` requests with the returned `sinceId`/`untilId` window for raw
+trace bodies, advancing `since_id` and filtering beyond `untilId` yourself.
 
-```
-Receipt for 'stripe': ZERO requests.
+An unmarked request to a vendor API made by a diagnostic probe looks like an
+application call. Isolate the measurement; concurrent runs cannot be automatically
+attributed. Bodies may be redacted/truncated and missing trace rows cannot be
+recovered by the reader. Receipts remain observations, not tamper-proof execution
+attestations; retain response/state assertions and reported blind spots.
 
-No requests appear in this returned service log; arrival for the current run is unproven.
-Do not report this change as working.
-```
+**`verisControl`** provides host-side access to the attached service's `manual`,
+`schema`, `operations`, `data` and `requests`. Pass `service` and `resource`;
+`method` defaults to `GET`. Inspect schema/manual first, then read data with
+`query: {"entity_type":"<table>","limit":"50","offset":"0"}`. Seed rows or
+configure schema-defined faults with `POST`/`PATCH` `data` and
+`body: {"data":{"<table>":[<rows>]}}`; read back the result. Raw data/request
+responses are pages, not inferred totals. Service support is checked by its
+response, and unsupported operations fail explicitly.
 
-The system prompt tells the agent to check it before claiming an integration
-works. You can also just ask for it.
-
-**`verisTwin`** names the twin and what it answers for — and with a service
-argument, returns that service's manual: what it models and how its data is
-shaped.
-
-```
-Veris twin sbx_a1b2c3
-
-1 service(s):
-  stripe (ready) -> https://gw.api.veris.ai/stripe
-```
+Writes request the `verisControlWrite` permission (default `ask`). User permissions,
+including blanket/wildcard rules, win. The tool accepts no credentials, arbitrary
+control URLs, reset, promotion, creation or deletion. The host resolves the service
+from this session's twin, so neither credentials nor control endpoints need to be
+guessed. File-byte transfer is outside this small control interface; a workflow
+requiring it must use an available provider file interface or report the missing
+capability. Canonical workflow content stays in `veris-ai/plugins`.
 
 ### The Veris MCP
 
@@ -111,12 +123,20 @@ if you want the same thing without an agent.
 ## Relationship to `@daytona/opencode`
 
 This is a fork of `@daytona/opencode` 0.192.0 (Apache-2.0, Copyright Daytona
-Platforms Inc.), and a deliberately small one: one changed import, two added
+Platforms Inc.), and a deliberately small one: one changed import, three added
 tools, a config hook, provider instructions in the system prompt, and a check that the
 Veris coordinates are set. The ten inherited tools, the git-sync flow and the session
 bookkeeping are untouched, so upstream changes stay easy to take.
 
 ## Adding Veris's skills alongside
+
+Release prerequisites: this provider SDK/plugin pair **0.3.0**, and the first
+published **@veris-ai/veris-opencode 0.7.3** from plugins PR #49. The composition
+is tested using packed release candidates; these versions are not published by
+this PR. Use the configuration after those npm releases exist. Resolve npm
+versions once and pin the installed semantic versions for replay; do not use a
+Git checkout/build installation fallback. PR #49's provider reference must also
+reflect the new baseline/control capability contract before release.
 
 The canonical workflows live in
 [veris-ai/plugins](https://github.com/veris-ai/plugins/tree/main/veris).
@@ -150,6 +170,22 @@ simulate the new workflow. Install only one sandbox provider plugin per session.
 
 `verisTwin` still returns service manuals without the skills package.
 
+## Synchronization and persistence
+
+Initial sync sends committed host `HEAD` over Daytona SSH into
+`/home/daytona/project`; uncommitted or later host edits are not imported.
+`gitSync` commits remote changes and pulls them into the plugin-owned local
+`opencode/N` branch. Verify its result and source commit; SSH host-key failures
+can block either direction. Preserve verification and configure trusted hosts via
+`DAYTONA_SSH_KNOWN_HOSTS` where supported. Do not edit plugin-owned branches locally.
+Ignored evidence does not travel through git; export it explicitly before expiry.
+
+Host storage maps the OpenCode session to its sandbox. Reconnect retrieves/starts
+it; platform idle/stop/delete policies apply, with no guaranteed session TTL here.
+Session deletion attempts sync and deletes the sandbox and owned twin; quitting
+OpenCode alone does not request deletion. Revalidate identity and establish a new
+receipt baseline on resume. Files surviving does not prove twin history survived.
+
 ## Limitations
 
 - **Requires a Veris control plane that serves an HTTP CONNECT gateway.**
@@ -159,10 +195,9 @@ simulate the new workflow. Install only one sandbox provider plugin per session.
   into the sandbox. Setting `DAYTONA_SSH_KNOWN_HOSTS` is the likely fix.
 - **Receipt blind spots.** QUIC/HTTP3 and ECH are reported in `leaks`. Preserve
   the receipt's mode, integrity and blind spots when describing what was verified.
-- **Published trust support differs from this source.** The 0.2.1 SDK already
+- **This release includes the newer Node trust flag.** The 0.2.1 SDK already
   installs a combined CA bundle and attempts system-store setup, but lacks the
-  newer `NODE_OPTIONS` trust flag. A runtime needing that fix requires a later
-  published SDK; do not disable TLS verification or overwrite the plugin's trust
+  newer `NODE_OPTIONS` trust flag. A runtime needing that fix requires the 0.3.0 SDK release; do not disable TLS verification or overwrite the plugin's trust
   configuration to get a green run.
 
 ## License

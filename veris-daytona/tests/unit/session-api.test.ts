@@ -26,4 +26,18 @@ describe('SDK run and control interface', () => {
     await expect(api().control('stripe', '../reset' as never, { method: 'POST' })).rejects.toThrow(/unsupported/)
     await expect(api().control('stripe', 'schema', { method: 'PATCH' })).rejects.toThrow(/unsupported/)
   })
+  it('invalidates evidence if reset happens during pagination', async () => {
+    const t = trace()
+    const sdk = api()
+    const baseline = await sdk.receiptBaseline()
+    t.add()
+    vi.stubGlobal('fetch', vi.fn(async (input, init) => {
+      const response = await t.fetcher(input, init)
+      const q = new URL(String(input)).searchParams
+      if (q.get('order') === 'asc' && q.get('limit') === '1000') t.reset()
+      return response
+    }))
+    await expect(sdk.receiptSince(baseline)).rejects.toThrow(/baseline invalid/)
+  })
+
 })

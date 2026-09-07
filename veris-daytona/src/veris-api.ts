@@ -1,10 +1,10 @@
+// The namespaced Veris surface: everything this package adds hangs off
+// `sbx.veris`, matching Daytona's own `sbx.fs` / `sbx.process` idiom so a
+// future @daytona/sdk minor can never collide with a generic method name.
 import { captureBaseline, validateBaseline } from './run-receipt'
 import type { ReceiptBaseline } from './run-receipt'
 import { serviceControl } from './service-control'
 import type { ControlOptions, ControlResource } from './service-control'
-// The namespaced Veris surface: everything this package adds hangs off
-// `sbx.veris`, matching Daytona's own `sbx.fs` / `sbx.process` idiom so a
-// future @daytona/sdk minor can never collide with a generic method name.
 import type { Sandbox } from '@daytona/sdk'
 import type { ControlPlane, ServiceInfo } from './control-plane'
 import { fetchReceiptEntry } from './receipt'
@@ -46,8 +46,9 @@ export interface TouchMatcher {
 }
 
 export interface VerisApi {
-  /** The Veris twin's sandbox id — NOT the Daytona sandbox id. */
+  /** Whether provider teardown owns this twin. */
   readonly ownsTwin: boolean
+  /** The Veris twin's sandbox id — NOT the Daytona sandbox id. */
   readonly sandboxId: string
   /** The Veris environment the twin was deployed from. Every control-plane
    *  route that acts on a twin is scoped to it, so a caller that wants to talk

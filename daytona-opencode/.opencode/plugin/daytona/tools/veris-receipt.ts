@@ -47,7 +47,7 @@ export const verisReceiptTool = (sessionManager: DaytonaSessionManager, projectI
       const count = Object.values(services).reduce((total, e) => total + e.requests, 0)
       ctx.metadata({ title: `${complete ? '' : 'at least '}${count} observed request(s)` })
       return JSON.stringify({ ...identity, scope: selected ? 'since-baseline' : 'cumulative', baseline: args.baseline,
-        mode: receipt.mode, integrity: receipt.integrity, leaks: receipt.leaks, complete, services,
+        mode: receipt.mode, integrity: receipt.integrity, leaks: receipt.leaks, complete, serviceCount: Object.keys(services).length, services,
         note: 'Entries are trace observations, not proof of all application egress or completed state changes. Excludes control and explicitly marked probe tiers. Unmarked vendor probes/concurrent runs cannot be attributed; isolate execution. Use verisControl requests for raw bodies and paginate; omittedEntries is display truncation.' })
     },
   }
