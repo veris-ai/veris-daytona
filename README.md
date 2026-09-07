@@ -17,6 +17,9 @@ And every run ends with a **receipt** of what the vendor actually received.
 Each has its own README with installation and usage. This page is about how they
 work and how to develop them.
 
+**Release status:** published 0.2.1 has no CLI. The prepared 0.3.0 release
+contains the executable described below; wait for that npm release to use it.
+
 `@veris-ai/daytona` also installs a `veris-daytona` executable, and it has five
 verbs. `run` does the whole job in one command — box up, code in, suite run,
 receipt read, everything down. The other four are that job cut into the pieces a
@@ -30,6 +33,29 @@ the egress credential, the 20-domain allowlist, the outbound proxy, the CA
 bundle, the canary, the trust variables. The "did this run prove anything" half
 belongs to the `veris` CLI, which already owns what a receipt means, what
 `--require-service` means and what the exit codes mean.
+
+
+## Shared skills in OpenCode
+
+Use the canonical `@veris-ai/veris-opencode` skills package plus **one** sandbox
+plugin after the pending skills 0.7.3 and provider 0.3.0 releases are published:
+
+```json
+{
+  "plugin": [
+    "@veris-ai/veris-opencode@latest",
+    "@veris-ai/daytona-opencode@latest"
+  ]
+}
+```
+
+The commands are `/veris:setup`, `/veris:build <request>` and `/veris:fix <request>`.
+`verisSkill` reads installed skill resources on the host; application file/bash
+tools remain remote. `verisTwin` identifies the plugin-owned session and controls,
+and `verisReceipt` takes an explicit pre-execution baseline. Skills reuse this
+session automatically. Record and pin the resolved published npm versions.
+See [daytona-opencode/README.md](daytona-opencode/README.md) for the capability
+contract, separate network/TLS/persistence/sync behavior and release prerequisites.
 
 ## How it works
 

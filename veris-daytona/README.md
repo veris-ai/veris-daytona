@@ -334,3 +334,38 @@ four systems involved refused:
 ## License
 
 Apache-2.0. Source: [veris-ai/veris-daytona](https://github.com/veris-ai/veris-daytona).
+
+## Receipts for an individual test run
+
+The next release adds a baseline API; existing `receipt()` calls still read the
+SDK's default receipt window. Capture immediately before the isolated command:
+
+```js
+const baseline = await sandbox.veris.receiptBaseline()
+// Run and await the application's own test command using this provider's SDK.
+const receipt = await sandbox.veris.receiptSince(baseline, 'stripe')
+const entry = receipt.services.stripe
+if (!entry || entry.capped) throw new Error('Application evidence is incomplete')
+```
+
+`ReceiptRequest.id` is stable within service history. `receiptSince` validates the
+execution sandbox, twin, service set/control URLs, and a uniquely marked schema
+read retained in the trace both before and after paging. Reset/erasure/replacement
+invalidates the baseline. Services without retained control request headers cannot
+establish this baseline; the call fails explicitly. Numeric IDs alone cannot detect
+all resets. Use a fresh baseline after reconnect/reset, before re-executing the test.
+
+Pages advance IDs within a newest-ID snapshot. `entry.requests` is an observed lower
+bound when `capped` is true; `incompleteReason` explains page budget, failed read or
+non-progress. A failed first read throws, while a successful empty window returns
+zero. `sinceId`/`untilId` identify the observed window. Control/probe tiers and
+`/veris/*` paths are excluded from application entries. Unmarked vendor probes and
+concurrent runs remain indistinguishable: finish them before baseline capture and
+retain application response/state assertions. Preserve mode, integrity and leaks.
+
+`veris.control(service, resource, options)` supports `manual`, `schema`,
+`operations`, `data`, and `requests`; `options` contains `method`, `query`, and
+`body`. Only data supports `POST`/`PATCH` writes, using the service's schema-defined
+`{data: {table: [rows]}}` envelope, including fault rows. Coordinates come from the
+attached twin; lifecycle and arbitrary URLs are excluded. SDK callers own write
+authorization; the OpenCode plugin applies its configured write permission.

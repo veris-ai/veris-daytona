@@ -39,7 +39,7 @@ describe('MCP registration', () => {
     const c = cfg()
     await verisConfig(c)
     expect((c as any).mcp).toBeUndefined()
-    expect((c as any).permission).toBeUndefined()
+    expect((c as any).permission).toEqual({ verisControlWrite: 'ask' })
   })
 
   it('never clobbers a user-configured veris server', async () => {
@@ -84,5 +84,23 @@ describe('permission defaults', () => {
     await expect(verisConfig(c)).resolves.toBeUndefined()
     expect((c as any).permission).toBe('allow')
     expect((c as any).mcp.veris).toBeDefined()
+  })
+})
+
+
+describe('wildcard permissions', () => {
+  it('preserves global and matching wildcard user choices', async () => {
+    for (const permission of [{ '*': 'deny' }, { 'veris*': 'deny' }]) {
+      const c = cfg({ permission: { ...permission } })
+      await verisConfig(c)
+      expect((c as any).permission).toEqual(permission)
+    }
+  })
+  it('preserves explicit data-write permission and normalizes a trailing API slash', async () => {
+    process.env.VERIS_API_BASE = 'https://control.invalid/'
+    const c = cfg({ permission: { verisControlWrite: 'deny' } })
+    await verisConfig(c)
+    expect((c as any).permission.verisControlWrite).toBe('deny')
+    expect((c as any).mcp.veris.url).toBe('https://control.invalid/mcp')
   })
 })

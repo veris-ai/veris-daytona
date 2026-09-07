@@ -4,7 +4,7 @@ import type { Receipt, ReceiptEntry } from '../../src/receipt'
 
 const entry = (name: string, requests: number, capped = false): ReceiptEntry => ({
   requests, controlUrl: `https://${name}.twin`, raw: null, capped,
-  entries: Array.from({ length: requests }, (_, i) => ({ id: i + 1, method: 'POST', path: `/v1/${i}`, status: 200 })),
+  entries: Array.from({ length: requests }, (_, i) => ({ id: i + 1, method: 'POST', path: `/v1/${i}`, status: 200, tier: 'handler' })),
 })
 const receipt = (services: Record<string, number>): Receipt => ({
   services: Object.fromEntries(Object.entries(services).map(([n, r]) => [n, entry(n, r)])),

@@ -1,100 +1,54 @@
-/**
- * Copyright Veris AI
- * SPDX-License-Identifier: Apache-2.0
- *
- * The tool this fork exists for.
- *
- * Reads a bounded view of the twin log, including earlier and control traffic.
- * Attribution needs a baseline, new application entries and response/state
- * assertions; a nonzero cumulative count cannot prove the current run.
- */
-
 import { z } from 'zod'
 import type { PluginInput } from '@opencode-ai/plugin'
 import type { ToolContext } from '@opencode-ai/plugin/tool'
-import { isVerisSandbox } from '@veris-ai/daytona'
 import type { DaytonaSessionManager } from '../core/session-manager'
+import { isVerisSandbox } from '@veris-ai/daytona'
+import { randomUUID } from 'node:crypto'
+import type { ReceiptBaseline } from '@veris-ai/daytona'
 
-export const verisReceiptTool = (
-  sessionManager: DaytonaSessionManager,
-  projectId: string,
-  worktree: string,
-  pluginCtx: PluginInput,
-) => ({
-  description:
-    'Read a bounded Veris twin request log, including earlier work and control traffic. ' +
-    'Capture a baseline before the application flow and compare afterward on the same twin. ' +
-    'A nonzero total alone does not prove this run; keep response/state assertions. ' +
-    'The full view shows up to 20 entries per HTTP service; a service view shows up to 50 ' +
-    'and omits the twin id. Pass a service name to see that service alone.',
-  args: {
-    service: z
-      .string()
-      .optional()
-      .describe('Service name (e.g. "stripe"). Omit for every service on the twin.'),
-  },
-  async execute(args: { service?: string }, ctx: ToolContext) {
-    const sandbox = await sessionManager.getSandbox(ctx.sessionID, projectId, worktree, pluginCtx)
-
-    // Without this OpenCode renders the call as "verisReceipt Unknown".
-    const title = (t: string) => ctx.metadata({ title: t })
-
-    if (!isVerisSandbox(sandbox)) {
-      title('no twin attached')
-      return (
-        'No Veris twin is attached to this sandbox, so there is no receipt to read.\n' +
-        'Set VERIS_API_KEY and VERIS_ENVIRONMENT_ID and start a new session to get one.'
-      )
-    }
-
-    if (args.service) {
-      const entry = await sandbox.veris.receipt(args.service)
-      title(`${args.service}: ${entry.requests} request(s)`)
-      if (entry.requests === 0) {
-        return (
-          `Receipt for '${args.service}': ZERO requests.\n\n` +
-          `No requests appear in this returned service log; arrival for the current run is unproven. ` +
-          `Do not report this change as working.`
-        )
+export const verisReceiptTool = (sessionManager: DaytonaSessionManager, projectId: string, worktree: string, pluginCtx: PluginInput) => {
+  // Opaque host-side handles prevent a model from editing ids to omit traffic.
+  // Restart/eviction requires a fresh pre-execution baseline, never a fallback.
+  const baselines = new Map<string, { sessionId: string; baseline: ReceiptBaseline }>()
+  return {
+    description: 'Capture action=baseline before an isolated application command; then action=read with its baseline token. No token reads cumulative history, not current-run evidence. Finish probes/seeding first. Other application/probe traffic in the window cannot be distinguished automatically.',
+    args: {
+      action: z.enum(['baseline', 'read']).optional(),
+      baseline: z.string().optional().describe('Opaque token returned by action=baseline in this session.'),
+      service: z.string().optional(),
+    },
+    async execute(args: { action?: 'baseline' | 'read'; baseline?: string; service?: string }, ctx: ToolContext) {
+      const sandbox = await sessionManager.getSandbox(ctx.sessionID, projectId, worktree, pluginCtx)
+      if (!isVerisSandbox(sandbox)) throw new Error('No Veris twin is attached to this sandbox')
+      const identity = { provider: 'daytona', sessionId: ctx.sessionID, sandboxId: sandbox.id, twinId: sandbox.verisSandboxId }
+      if (args.action === 'baseline') {
+        if (args.baseline || args.service) throw new Error('Capture a baseline for all services without a baseline token or service filter')
+        const baseline = await sandbox.veris.receiptBaseline()
+        const token = randomUUID()
+        if (baselines.size >= 100) baselines.delete(baselines.keys().next().value!)
+        baselines.set(token, { sessionId: ctx.sessionID, baseline })
+        ctx.metadata({ title: 'receipt baseline captured' })
+        return JSON.stringify({ ...identity, baseline: token, watermarks: Object.fromEntries(Object.entries(baseline.services).map(([name, mark]) => [name, mark.id])),
+          instruction: 'Now run the isolated application command, await completion, then read this baseline. Do not seed, probe, reset or replace the session in between.' })
       }
-      const lines = entry.entries
-        .slice(0, 50)
-        .map((r) => `  ${r.method} ${r.path} -> ${r.status ?? 'no response (fault)'}`)
-      return (
-        `Receipt for '${args.service}': ${entry.requests} request(s).\n` +
-        `${lines.join('\n')}${entry.entries.length > 50 ? `\n  … ${entry.entries.length - 50} more` : ''}`
-      )
-    }
-
-    const receipt = await sandbox.veris.receipt()
-    const names = Object.keys(receipt.services)
-    const total = names.reduce((n, k) => n + (receipt.services[k]?.requests ?? 0), 0)
-    title(`${total} request(s) across ${names.length} service(s)`)
-
-    const header =
-      `Veris receipt — twin ${sandbox.verisSandboxId}\n` +
-      `  interception: ${receipt.mode}   integrity: ${receipt.integrity}\n` +
-      (receipt.leaks.length ? `  blind spots: ${receipt.leaks.join(', ')}\n` : '')
-
-    if (total === 0) {
-      return (
-        header +
-        `\nZERO requests reached the twin, across ${names.length || 'no'} service(s).\n\n` +
-        `No requests appear in these returned logs; arrival for the current run is unproven. ` +
-        `Report that limitation rather than claiming the integration was verified.`
-      )
-    }
-
-    const body = names
-      .map((name) => {
-        const e = receipt.services[name]!
-        const calls = e.entries
-          .slice(0, 20)
-          .map((r) => `    ${r.method} ${r.path} -> ${r.status ?? 'no response (fault)'}`)
-        return `  ${name}: ${e.requests} request(s)\n${calls.join('\n')}`
-      })
-      .join('\n')
-
-    return `${header}\n${total} request(s) reached the twin:\n${body}`
-  },
-})
+      const selected = args.baseline ? baselines.get(args.baseline) : undefined
+      if (args.baseline && (!selected || selected.sessionId !== ctx.sessionID)) throw new Error('Unknown or expired baseline for this session; capture a new baseline before execution')
+      const receipt = selected ? await sandbox.veris.receiptSince(selected.baseline, args.service) : await sandbox.veris.receipt()
+      if (args.service && !receipt.services[args.service]) throw new Error(`Unknown HTTP service '${args.service}'`)
+      const services = Object.fromEntries(Object.entries(receipt.services)
+        .filter(([name]) => !args.service || name === args.service)
+        .map(([name, entry]) => {
+          const e = entry!
+          return [name, { requests: e.requests, countKind: e.capped ? 'at-least' : 'exact', complete: !e.capped,
+            incompleteReason: e.incompleteReason, sinceId: e.sinceId, untilId: e.untilId, entries: e.entries.slice(0, 50),
+            omittedEntries: Math.max(0, e.entries.length - 50) }]
+        }))
+      const complete = Object.values(services).every(e => e.complete)
+      const count = Object.values(services).reduce((total, e) => total + e.requests, 0)
+      ctx.metadata({ title: `${complete ? '' : 'at least '}${count} observed request(s)` })
+      return JSON.stringify({ ...identity, scope: selected ? 'since-baseline' : 'cumulative', baseline: args.baseline,
+        mode: receipt.mode, integrity: receipt.integrity, leaks: receipt.leaks, complete, serviceCount: Object.keys(services).length, services,
+        note: 'Entries are trace observations, not proof of all application egress or completed state changes. Excludes control and explicitly marked probe tiers. Unmarked vendor probes/concurrent runs cannot be attributed; isolate execution. Use verisControl requests for raw bodies and paginate; omittedEntries is display truncation.' })
+    },
+  }
+}

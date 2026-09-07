@@ -1,6 +1,10 @@
 // The namespaced Veris surface: everything this package adds hangs off
 // `sbx.veris`, matching Daytona's own `sbx.fs` / `sbx.process` idiom so a
 // future @daytona/sdk minor can never collide with a generic method name.
+import { captureBaseline, validateBaseline } from './run-receipt'
+import type { ReceiptBaseline } from './run-receipt'
+import { serviceControl } from './service-control'
+import type { ControlOptions, ControlResource } from './service-control'
 import type { Sandbox } from '@daytona/sdk'
 import type { ControlPlane, ServiceInfo } from './control-plane'
 import { fetchReceiptEntry } from './receipt'
@@ -42,6 +46,8 @@ export interface TouchMatcher {
 }
 
 export interface VerisApi {
+  /** Whether provider teardown owns this twin. */
+  readonly ownsTwin: boolean
   /** The Veris twin's sandbox id — NOT the Daytona sandbox id. */
   readonly sandboxId: string
   /** The Veris environment the twin was deployed from. Every control-plane
@@ -52,6 +58,9 @@ export interface VerisApi {
   services(): Promise<ServiceInfo[]>
   /** The service's own manual: what it models and how its data is shaped. */
   manual(service: string): Promise<string>
+  receiptBaseline(): Promise<ReceiptBaseline>
+  receiptSince(baseline: ReceiptBaseline, service?: string): Promise<Receipt>
+  control(service: string, resource: ControlResource, options?: ControlOptions): Promise<unknown>
   receipt(): Promise<Receipt>
   receipt(service: string): Promise<ReceiptEntry>
   assertTouched(service: string, match?: TouchMatcher): Promise<void>
@@ -76,6 +85,7 @@ export interface DeliverToOpts {
 export class VerisApiImpl implements VerisApi {
   constructor(private readonly ctx: VerisContext) {}
 
+  get ownsTwin(): boolean { return this.ctx.ownsTwin }
   get sandboxId(): string { return this.ctx.twinId }
   get environmentId(): string { return this.ctx.environmentId }
   get mode(): 'gateway' { return 'gateway' }
@@ -140,6 +150,38 @@ export class VerisApiImpl implements VerisApi {
     return this.ctx.watermarks?.[service] ?? 0
   }
 
+  private async verifyIntegrity(): Promise<void> {
+    await probeCanary(this.ctx.sandbox, this.ctx.canaryHost, this.ctx.twinId)
+  }
+
+  async receiptBaseline(): Promise<ReceiptBaseline> {
+    await this.verifyIntegrity()
+    return captureBaseline(this.ctx.twinId, this.ctx.sandbox.id,
+      (await this.services()).filter(s => isHttpUrl(s.control_url)))
+  }
+
+  async receiptSince(baseline: ReceiptBaseline, service?: string): Promise<Receipt> {
+    await this.verifyIntegrity()
+    const services = (await this.services()).filter(s => isHttpUrl(s.control_url))
+    if (service !== undefined && !services.some(s => s.name === service)) {
+      throw new VerisError(`unknown HTTP service '${service}'`, { phase: 'receipt' })
+    }
+    await validateBaseline(baseline, this.ctx.twinId, this.ctx.sandbox.id, services)
+    const selected = service === undefined ? services : services.filter(s => s.name === service)
+    const entries = await Promise.all(selected.map(async svc =>
+      [svc.name, await fetchReceiptEntry(svc, baseline.services[svc.name]!.id)] as const))
+    // Reset during the read invalidates the whole measurement, including any
+    // pages fetched before history disappeared.
+    await validateBaseline(baseline, this.ctx.twinId, this.ctx.sandbox.id, await this.services().then(s => s.filter(v => isHttpUrl(v.control_url))))
+    return { services: Object.fromEntries(entries), mode: 'gateway', integrity: 'verified', leaks: this.leaks() }
+  }
+
+  async control(service: string, resource: ControlResource, options?: ControlOptions): Promise<unknown> {
+    const svc = (await this.services()).find(s => s.name === service)
+    if (!svc) throw new VerisError(`unknown service '${service}'`)
+    return serviceControl(svc, resource, options)
+  }
+
   async assertTouched(service: string, match?: TouchMatcher): Promise<void> {
     // Throws VerisError (not VerisUntouchedError) for an unknown service — a
     // typo is a different failure from a service that saw zero traffic.
@@ -150,6 +192,9 @@ export class VerisApiImpl implements VerisApi {
           (match.method === undefined || r.method.toUpperCase() === match.method.toUpperCase()) &&
           (match.path === undefined || r.path.includes(match.path)))
       : entry.entries
+    if (matched.length < need && entry.capped) {
+      throw new VerisError(`receipt for '${service}' is incomplete; insufficient evidence`, { phase: 'receipt' })
+    }
     if (matched.length < need) {
       const what = match
         ? `matching ${match.method ?? 'ANY'} ${match.path ?? '*'} (${matched.length}/${need})`
