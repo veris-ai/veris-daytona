@@ -1,3 +1,4 @@
+import { verisControlTool } from './tools/veris-control'
 /**
  * Copyright Daytona Platforms Inc.
  * SPDX-License-Identifier: Apache-2.0
@@ -41,6 +42,7 @@ export function createDaytonaTools(
     grep: grepTool(sessionManager, projectId, worktree, pluginCtx),
     getPreviewURL: getPreviewURLTool(sessionManager, projectId, worktree, pluginCtx),
     gitSync: gitSyncTool(sessionManager, projectId, worktree, pluginCtx),
+    verisControl: verisControlTool(sessionManager, projectId, worktree, pluginCtx),
     verisReceipt: verisReceiptTool(sessionManager, projectId, worktree, pluginCtx),
     verisTwin: verisTwinTool(sessionManager, projectId, worktree, pluginCtx),
   }

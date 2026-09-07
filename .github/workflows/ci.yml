@@ -29,6 +29,7 @@ jobs:
       # import against the SDK still resolves.
       - run: npm run typecheck
       - run: npm test
+      - run: npm run test:pack
 
   # Lints the PR title, not the commits in the PR. This repo squash-merges --
   # every commit on main carries a `(#N)` -- so the PR title is the subject that

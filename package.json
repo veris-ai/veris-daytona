@@ -11,7 +11,8 @@
     "typecheck": "npm run typecheck -w @veris-ai/daytona && npm run typecheck -w @veris-ai/daytona-opencode",
     "test": "npm run test -w @veris-ai/daytona && npm run test -w @veris-ai/daytona-opencode",
     "smoke": "tsx scripts/smoke.ts",
-    "version:set": "node scripts/version.mjs"
+    "version:set": "node scripts/version.mjs",
+    "test:pack": "node scripts/test-pack.mjs"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.2",

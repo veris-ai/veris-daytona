@@ -39,7 +39,7 @@ describe('MCP registration', () => {
     const c = cfg()
     await verisConfig(c)
     expect((c as any).mcp).toBeUndefined()
-    expect((c as any).permission).toBeUndefined()
+    expect((c as any).permission).toEqual({ verisControlWrite: 'ask' })
   })
 
   it('never clobbers a user-configured veris server', async () => {
