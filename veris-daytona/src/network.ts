@@ -1,14 +1,14 @@
 // Builds the Daytona network params.
 //
-//   domainAllowList   deny-all-except, enforced at the runner. Verified
-//                     transparent: a client that strips every proxy variable
-//                     still cannot reach a host directly, so this is a network
-//                     boundary and not an env-var convention.
-//   outboundProxyUrl  where Daytona forwards allowed traffic. Chained, not
-//                     advisory — an unreachable one makes allowed traffic 502.
+//   networkAllowList  the Veris gateway's IPv4 address(es), one /32 each, and
+//                     nothing else. Enforced at Daytona's runner: a process
+//                     that ignores the proxy variables cannot dial out at all.
+//   outboundProxyUrl  where Daytona forwards everything: the gateway, which
+//                     answers vendor hostnames from the twin and passes public
+//                     hosts (registries, git) through untouched.
 //
-// Together those two are the whole mechanism: the allowlist decides what may
-// leave, and the outbound proxy (the Veris gateway) decides what answers.
+// Together those two are the whole mechanism. Daytona never sees a hostname
+// list — see buildNetwork for why that is load-bearing, not a simplification.
 import type { ServiceInfo } from './control-plane'
 import { VerisError } from './errors'
 
@@ -18,17 +18,9 @@ export type EgressMode = 'strict' | 'open'
 export const isHttpUrl = (u: string) => /^https?:/.test(u)
 
 /**
- * Vendor hostnames the twin answers for. These MUST be on the allowlist.
- *
- * That reads backwards until you follow the path: the sandbox's traffic goes to
- * Daytona's proxy, which drops anything not allowlisted and forwards the rest
- * to `outboundProxyUrl` — the Veris gateway. So a vendor host that is absent
- * never reaches the gateway and never reaches the twin; it is simply blocked.
- *
- * Allowing it is not a leak, because the allowlist is not what stands between
- * the sandbox and the real vendor — the gateway is. Verified: with every proxy
- * variable stripped, an allowlisted host is still intercepted rather than
- * dialled directly.
+ * Vendor hostnames the twin answers for — the ones the gateway intercepts on
+ * this sandbox's behalf. Informational: they are what a receipt is about, and
+ * they are deliberately NOT handed to Daytona as an allowlist (see buildNetwork).
  */
 export function vendorHosts(services: ServiceInfo[]): string[] {
   const hosts = new Set<string>()
@@ -138,147 +130,66 @@ export function isSafeEnvName(name: string): boolean {
   return /^[A-Z][A-Z0-9_]{0,63}$/.test(name) && !PROCESS_CONTROLLING.has(name)
 }
 
-/**
- * Package registries and toolchain hosts, allowed by default.
- *
- * A coding sandbox that cannot `npm install` is not a coding sandbox, and
- * registries are not vendors under test, so they must stay reachable. Naming
- * them here keeps the list auditable rather than punching a wildcard.
- *
- * Override wholesale with `veris.allowRegistries: false` plus your own
- * `veris.allowOut`, for a sandbox that should reach nothing but its twin.
- *
- * ORDERED BY VALUE, because it is also the trim order: DAYTONA_DOMAIN_LIMIT
- * caps the whole allowlist, and when the twin's own hosts do not leave room
- * for all of these, the tail is what goes.
- *
- * `github.com` is deliberately NOT here, and its absence is the interesting
- * entry. It is a vendor host, not a registry: the platform's route table maps
- * it to the `github` twin, and the gateway resolves that table for every
- * sandbox rather than only for the services the environment deployed. So in an
- * environment without a github twin the gateway still forges a leaf for
- * `github.com` (it verifies) and then dials a backend pod that does not exist
- * — measured as an empty reply to every request, which broke `uv`'s fetch of a
- * CPython the image lacked. An environment that DOES have the github twin gets
- * the host from vendorHosts() anyway, which is where it belongs. Nothing else
- * in this list is claimed by any twin, so nothing else has the problem.
- */
-export const DEFAULT_REGISTRY_HOSTS: readonly string[] = [
-  // JS
-  'registry.npmjs.org', 'registry.yarnpkg.com',
-  // Python
-  'pypi.org', 'files.pythonhosted.org',
-  // Source hosts the above routinely redirect to
-  'codeload.github.com', 'objects.githubusercontent.com', 'raw.githubusercontent.com',
-  // Debian/Ubuntu
-  'deb.debian.org', 'security.debian.org', 'archive.ubuntu.com', 'security.ubuntu.com',
-  // Go
-  'proxy.golang.org', 'sum.golang.org',
-  // Rust
-  'crates.io', 'static.crates.io', 'index.crates.io',
-  // Containers
-  'ghcr.io',
-]
-
-/**
- * The most domains Daytona accepts in one `domainAllowList`.
- *
- * Measured, not documented: the SDK's types say nothing about a limit, and
- * `create()` refuses outright with "Domain allow list cannot contain more than
- * 20 domains". A seven-service environment plus the default registries built
- * 28 entries and never reached the sandbox at all — a first-time user's very
- * first `create()`, failing with a Daytona error about a constraint this SDK
- * could see coming. So the list is trimmed to fit here, and the one case that
- * cannot be trimmed is refused with an explanation instead.
- */
-export const DAYTONA_DOMAIN_LIMIT = 20
-
 export interface BuildNetworkArgs {
-  services: ServiceInfo[]
   mode: EgressMode
-  /** The Veris gateway's host, and the canary hostname it answers on. Without
-   *  these the sandbox cannot reach the gateway at all. */
-  gatewayHosts: string[]
-  /** Extra hostnames the caller wants reachable. */
-  allowOut?: string[]
-  /** Include DEFAULT_REGISTRY_HOSTS. Default true. */
-  allowRegistries?: boolean
+  /** IPv4 addresses the Veris gateway listens on, from the egress credential
+   *  (or one DNS lookup of the proxy host on an older control plane). */
+  gatewayIps: string[]
 }
 
 /** The Daytona create params that decide what the sandbox may reach. */
 export interface NetworkParams {
-  networkBlockAll?: boolean
-  domainAllowList?: string
+  networkAllowList?: string
 }
 
-/** What buildNetwork decided: the params, and what had to give way to the cap. */
+/** What buildNetwork decided. */
 export interface NetworkPlan {
   params: NetworkParams
-  /** Registry hosts left out to stay under DAYTONA_DOMAIN_LIMIT, in trim order.
-   *  Never silent — the caller says so, because a sandbox that cannot reach
-   *  crates.io fails much later and blames the wrong thing. */
-  droppedRegistries: string[]
 }
+
+const IPV4_RE = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/
 
 /**
- * Strict (the default) is deny-all-except: the vendor hosts the twin answers
- * for, the gateway itself, the twin's data planes, the twin's own host where a
- * service can only be reached there, and package registries.
+ * Strict (the default) pins the sandbox to the gateway's addresses and nothing
+ * else: `networkAllowList` is one /32 per gateway IP. Every hostname the code
+ * under test dials — vendor, registry, anything — then travels as a CONNECT
+ * through the gateway, which answers vendor hostnames from the twin and passes
+ * public hosts through. A client that ignores the proxy variables cannot dial
+ * out at all (Daytona blocks it), so it fails closed rather than reaching the
+ * real vendor.
  *
- * Open sets no allowlist at all. It exists for debugging and is never the
- * default: with no allowlist there is nothing forcing traffic at the gateway,
- * and the receipt cannot tell you what slipped past.
+ * Why an ADDRESS list and not the hostname list this used to build: measured
+ * on Daytona, a `domainAllowList` set beside `outboundProxyUrl` switches its
+ * egress proxy into TLS inspection. The client is shown a leaf signed by
+ * Daytona's own CA, Daytona opens a second TLS session to the gateway and
+ * rejects the Veris-signed leaf it gets back, and every vendor call ends as
+ * `502 could not reach upstream host` whatever the sandbox trusts.
+ * `networkAllowList` beside the same proxy URL leaves the tunnel untouched.
+ * Pinning to the gateway also retires Daytona's 20-domain cap: what may be
+ * reached is the gateway's decision, not a list assembled here.
  *
- * Daytona caps the list at DAYTONA_DOMAIN_LIMIT, so this also decides what
- * fits. Everything the twin cannot work without is required; the registries
- * are the only discretionary part, so they are what gets trimmed. Required
- * hosts alone exceeding the cap is the one case that cannot be resolved here,
- * and it throws rather than shipping a half allowlist that would fail as a
- * mystery 403 during the run.
+ * Open sets no allowlist at all. Daytona still blocks anything that bypasses
+ * the proxy in this mode, so it is not a leak; it is the way to run against a
+ * control plane that has not published its gateway addresses.
  */
 export function buildNetwork(args: BuildNetworkArgs): NetworkPlan {
-  const { services, mode, gatewayHosts, allowOut = [], allowRegistries = true } = args
-  if (mode === 'open') return { params: {}, droppedRegistries: [] }
-
-  const required = dedupe([
-    ...vendorHosts(services),
-    ...gatewayHosts,
-    ...dataPlaneHosts(services),
-    ...directTwinHosts(services),
-    ...allowOut,
-  ])
-
-  if (required.length > DAYTONA_DOMAIN_LIMIT) {
+  const { mode, gatewayIps } = args
+  if (mode === 'open') return { params: {} }
+  const ips = [...new Set(gatewayIps)]
+  if (!ips.length) {
     throw new VerisError(
-      `this sandbox needs ${required.length} allowlist entries and Daytona accepts ` +
-      `${DAYTONA_DOMAIN_LIMIT} ("Domain allow list cannot contain more than ${DAYTONA_DOMAIN_LIMIT} ` +
-      `domains"), and none of them is optional: they are the vendor hostnames the twin answers ` +
-      `for, the gateway, the twin's data planes and your own veris.allowOut. Use a Veris ` +
-      `environment with fewer services, drop entries from veris.allowOut, or run with ` +
-      `veris.egress: 'open' — which sets no allowlist at all, and is for debugging only. ` +
-      `Wanted: ${required.join(', ')}`,
-      { phase: 'sandbox-create' })
+      "the control plane did not name the gateway's IP addresses (egress credential " +
+      '`gateway_ips`) and the gateway hostname could not be resolved, so the sandbox cannot ' +
+      "be pinned to it. Upgrade the control plane, or run with veris.egress: 'open' " +
+      '(Daytona still blocks anything that bypasses the proxy).',
+      { phase: 'credential-mint' })
   }
-
-  // Registries already required (a vendor twin claiming one) do not spend a
-  // second slot, so they are filtered out before the budget is measured.
-  const registries = allowRegistries
-    ? DEFAULT_REGISTRY_HOSTS.filter((h) => !required.includes(h))
-    : []
-  const room = DAYTONA_DOMAIN_LIMIT - required.length
-
-  return {
-    params: {
-      // NOT networkBlockAll: that blocks everything including the gateway, and the
-      // allowlist is what Daytona documents as "unbypassable network-layer
-      // enforcement". Blocking all and then allowing is not a shape the API
-      // offers; a non-empty domainAllowList IS the deny-by-default.
-      domainAllowList: [...required, ...registries.slice(0, room)].sort().join(','),
-    },
-    droppedRegistries: registries.slice(room),
+  const bad = ips.filter((ip) => !IPV4_RE.test(ip))
+  if (bad.length) {
+    throw new VerisError(
+      `the control plane returned gateway addresses that are not IPv4: ${JSON.stringify(bad)} ` +
+      "(Daytona's networkAllowList takes IPv4 CIDRs only)",
+      { phase: 'credential-mint' })
   }
-}
-
-function dedupe(hosts: (string | undefined)[]): string[] {
-  return [...new Set(hosts.filter((h): h is string => Boolean(h)))]
+  return { params: { networkAllowList: ips.map((ip) => `${ip}/32`).join(',') } }
 }

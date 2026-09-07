@@ -4,7 +4,7 @@
 //   veris-daytona provision --sandbox sbx_a1b2c3 --image python:3.12
 //
 // It is `run` with the second half removed. Everything Veris-shaped still
-// happens — the egress credential, the allowlist and its 20-domain fit, the
+// happens — the egress credential, the gateway pin, the
 // sandbox with its outbound proxy, the CA bundle, the canary, the trust
 // variables — and then it stops, with the box up and nothing running in it.
 //
@@ -26,8 +26,6 @@ export interface ProvisionOptions {
   /** Daytona image or snapshot to create the sandbox from. Unset: Daytona's default. */
   image?: string
   snapshot?: string
-  /** Extra hostnames the sandbox may reach. */
-  allowOut: string[]
   /** KEY=VALUE pairs set as sandbox environment variables. */
   env: Record<string, string>
 }
@@ -115,7 +113,6 @@ deleted. One JSON object is printed on stdout; progress goes to stderr.
   --sandbox <twin-id>       the Veris twin to attach to (required)
   --image <name>            Daytona image to run in (default: Daytona's default snapshot)
   --snapshot <name>         Daytona snapshot to run in
-  --allow-out <host>        extra hostname the sandbox may reach (repeatable)
   --env KEY=VALUE           set as a sandbox environment variable (repeatable)
 
 needs: DAYTONA_API_KEY, and a Veris key: VERIS_API_KEY, or the profile
@@ -176,7 +173,7 @@ const RUN_ONLY: Record<string, string> = {
 
 /** Parse everything after `provision`. Pure; throws UsageError with a human message. */
 export function parseProvisionArgs(argv: readonly string[]): ProvisionOptions {
-  const opts: ProvisionOptions = { sandbox: '', allowOut: [], env: {} }
+  const opts: ProvisionOptions = { sandbox: '', env: {} }
 
   const takeValue = (i: number, flag: string): string => {
     const v = argv[i + 1]
@@ -196,7 +193,6 @@ export function parseProvisionArgs(argv: readonly string[]): ProvisionOptions {
       case '--sandbox': opts.sandbox = takeValue(i++, flag); break
       case '--image': opts.image = takeValue(i++, flag); break
       case '--snapshot': opts.snapshot = takeValue(i++, flag); break
-      case '--allow-out': opts.allowOut.push(takeValue(i++, flag)); break
       case '--env': {
         const pair = takeValue(i++, flag)
         const eq = pair.indexOf('=')

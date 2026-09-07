@@ -1,15 +1,14 @@
 // Reads of a twin service's own control plane that are not the receipt.
 //
 // Same shape and same reasoning as receipt.ts: these run HOST-SIDE, never from
-// inside the sandbox. The twin's host is kept off the sandbox's domainAllowList
-// wherever it can be, because a sandbox that can reach /veris/* can also reach
-// /veris/reset — and an agent that can clear request history can make its own
-// receipt say anything.
+// inside the sandbox. The twin's control routes take the org's API key, which
+// the sandbox never holds: a sandbox that could reach /veris/reset could clear
+// the request history and make its own receipt say anything.
 //
 // "Wherever it can be" is the honest version. A service with no vendor routes
 // has no hostname for the gateway to intercept, so its twin URL is the only way
-// to use it at all, and network.ts's directTwinHosts allows that host for
-// exactly those services. Nothing else allows it.
+// to use it at all; network.ts's directTwinHosts names that host for exactly
+// those services, so a caller knows which twins are reached that way.
 import { VerisError } from './errors'
 import type { ServiceInfo } from './control-plane'
 import { isHttpUrl } from './network'

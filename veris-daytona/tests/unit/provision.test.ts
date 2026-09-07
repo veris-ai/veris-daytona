@@ -25,11 +25,9 @@ describe('parseProvisionArgs', () => {
   it('collects repeatable flags and env pairs', () => {
     const o = parseProvisionArgs([
       '--sandbox', 'sbx_1', '--image', 'python:3.12',
-      '--allow-out', 'internal.corp', '--allow-out', 'other.corp',
       '--env', 'A=1', '--env', 'B=x=y',
     ])
     expect(o.image).toBe('python:3.12')
-    expect(o.allowOut).toEqual(['internal.corp', 'other.corp'])
     expect(o.env).toEqual({ A: '1', B: 'x=y' })
   })
 

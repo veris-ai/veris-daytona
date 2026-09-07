@@ -11,8 +11,10 @@ vulnerability report.
 properties are load-bearing rather than incidental. If you find a way to break
 any of them, that is a vulnerability:
 
-- **A sandbox cannot reach a host outside its `domainAllowList`.** Enforcement
-  is Daytona's, at the network layer; this package only computes the list.
+- **A sandbox cannot dial anything but the Veris gateway's address.**
+  Enforcement is Daytona's `networkAllowList`, at the network layer; this
+  package only computes the pin. A process that ignores the proxy variables is
+  blocked, not let out.
 - **A vendor hostname on that list is answered by the Veris gateway, not by the
   real vendor.** The allowlist is not the boundary here — the gateway is. A path
   that reaches a real vendor API from inside a Veris sandbox is the highest
@@ -30,7 +32,7 @@ any of them, that is a vulnerability:
 ## What it is not responsible for
 
 - The isolation of the Daytona sandbox itself, or Daytona's enforcement of
-  `domainAllowList` — report those to Daytona.
+  `networkAllowList` — report those to Daytona.
 - The twin's own behaviour, which is the Veris platform.
 - QUIC/HTTP3 and ECH, which the gateway does not intercept. These are reported
   in the receipt's `leaks` rather than silently omitted; that is a documented

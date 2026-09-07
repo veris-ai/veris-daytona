@@ -24,11 +24,11 @@ import { ControlPlane } from './control-plane'
 import type { ServiceInfo, TwinSandbox } from './control-plane'
 import { VerisApiImpl } from './veris-api'
 import type { VerisApi, VerisContext } from './veris-api'
-import { DAYTONA_DOMAIN_LIMIT, buildNetwork, dataPlaneEnv, isHttpUrl } from './network'
+import { buildNetwork, dataPlaneEnv, isHttpUrl } from './network'
 import type { EgressMode } from './network'
 import { fetchWatermark } from './receipt'
 import { CA_CERT_PATH, nodeOptionsWithTrust, sanitizeTrustEnv } from './trust'
-import { gatewayProxyUrl, installCa, probeCanary } from './gateway'
+import { gatewayIps, gatewayProxyUrl, installCa, probeCanary } from './gateway'
 import { MissingCredentialsError, VerisError, VerisGatewayNotOfferedError } from './errors'
 import { requireVerisCredentials, resolveVerisCredentials } from './profile'
 import { SDK_VERSION } from './version'
@@ -46,15 +46,13 @@ export interface VerisOpts {
   attachSandboxId?: string
   /** Twin TTL backstop, minutes. Default 60, kept in step with the sandbox's ttlMinutes. */
   ttlMinutes?: number
-  /** 'strict' (default): the sandbox reaches only its twin, its data planes,
-   *  the control plane and package registries. 'open': no allowlist at all —
-   *  debugging only, because a bypassing client then reaches the real vendor. */
+  /** 'strict' (default): Daytona may reach the Veris gateway's address and
+   *  nothing else; everything the code dials goes through the gateway, which
+   *  answers vendor hostnames from the twin and passes registries and other
+   *  public hosts through. 'open': no Daytona allowlist — for a control plane
+   *  that has not published the gateway's addresses. Daytona blocks anything
+   *  that bypasses the proxy in both modes. */
   egress?: EgressMode
-  /** Extra hostnames to allow out. */
-  allowOut?: string[]
-  /** Allow package registries (npm, PyPI, apt, …). Default true: a coding
-   *  sandbox that cannot install dependencies is not usable. */
-  allowRegistries?: boolean
   /** Install the gateway CA into the sandbox trust store. Default true; without
    *  it every HTTPS call to a vendor host fails certificate validation. */
   installCa?: boolean
@@ -197,25 +195,12 @@ export class Daytona extends BaseDaytona {
       }
 
       const services = twin.services?.length ? twin.services : await controlPlane.services(twin.id)
-      // Validated here, before it reaches either the allowlist or Daytona.
+      // Validated here, before it reaches Daytona.
       const proxyUrl = gatewayProxyUrl(credential)
-      const network = buildNetwork({
-        services, mode: egress,
-        // The gateway has to be reachable or nothing is: taken from the URL we
-        // are actually going to use, so the two can never disagree.
-        gatewayHosts: [new URL(proxyUrl).hostname, credential.canary_host].filter(Boolean),
-        allowOut: v.allowOut, allowRegistries: v.allowRegistries,
-      })
-      if (network.droppedRegistries.length) {
-        // Said out loud, because the failure it causes lands much later and
-        // blames the wrong thing: a `cargo build` that cannot reach crates.io
-        // reads as a broken sandbox rather than as an allowlist that was full.
-        process.stderr.write(
-          `veris: Daytona allows ${DAYTONA_DOMAIN_LIMIT} domains and this twin's own hosts take ` +
-          `most of them, so these registries were left off: ` +
-          `${network.droppedRegistries.join(', ')}. Name the ones you need in veris.allowOut, ` +
-          `or set veris.allowRegistries: false to spend every remaining slot yourself.\n`)
-      }
+      // Pinned to the gateway's ADDRESS, never a hostname list: a
+      // domainAllowList beside the proxy URL turns Daytona's egress into a
+      // TLS-inspecting proxy that rejects the gateway's leaf (see buildNetwork).
+      const network = buildNetwork({ mode: egress, gatewayIps: await gatewayIps(credential, proxyUrl) })
 
       // Where each service's log stands BEFORE anything can have run in the
       // sandbox: the receipt counts from here, so an attached twin's earlier
@@ -231,6 +216,11 @@ export class Daytona extends BaseDaytona {
         // them; the flag makes it read OpenSSL's store, which the CA install
         // fills. Appended, not replaced: a caller's own NODE_OPTIONS keep working.
         ...(v.installCa !== false ? { NODE_OPTIONS: nodeOptionsWithTrust(rest.envVars?.NODE_OPTIONS) } : {}),
+        // Node ignores HTTPS_PROXY unless told to, and Daytona blocks anything
+        // that dials out directly — so without this every plain `https.get`
+        // and `fetch` in Node 24+ dies with ECONNRESET instead of reaching
+        // the gateway. Older Node needs a proxy agent; the variable is inert there.
+        NODE_USE_ENV_PROXY: '1',
         ...(v.dataPlaneEnv !== false ? dataPlaneEnv(services) : {}),
         VERIS_SANDBOX_ID: twin.id,
       }
@@ -250,9 +240,9 @@ export class Daytona extends BaseDaytona {
           [LABEL.createId]: createId,
         },
         ...network.params,
-        // 3. Where Daytona forwards everything the allowlist permits. Chained,
-        //    not advisory: an unreachable gateway makes allowed traffic 502
-        //    rather than quietly going direct.
+        // 3. Where Daytona forwards everything. Chained, not advisory: an
+        //    unreachable gateway makes traffic 502 rather than quietly going
+        //    direct.
         outboundProxyUrl: proxyUrl,
         ttlMinutes: rest.ttlMinutes ?? ttlMinutes,
       }

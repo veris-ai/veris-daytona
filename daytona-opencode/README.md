@@ -110,11 +110,11 @@ Do not treat a receipt as a tamper-proof log or reset the twin to clear a baseli
 
 ## Network interception
 
-The sandbox is created with a `domainAllowList` — the vendor hostnames the twin
-answers for, the Veris gateway, the twin's data planes, and package registries —
-and an `outboundProxyUrl` pointing at the gateway. Daytona drops anything not on
-the list and forwards the rest to the gateway, which answers vendor hostnames
-from the twin. `npm install` still works; `api.stripe.com` reaches your twin.
+The sandbox is created with a `networkAllowList` holding only the Veris
+gateway's address and an `outboundProxyUrl` pointing at that gateway. Daytona
+forwards everything to the gateway, which answers vendor hostnames from the twin
+and passes public hosts through; a process that bypasses the proxy is blocked.
+`npm install` still works; `api.stripe.com` reaches your twin.
 
 Everything above happens inside `@veris-ai/daytona`, which this plugin uses in
 place of `@daytona/sdk`. See [its README](https://www.npmjs.com/package/@veris-ai/daytona)

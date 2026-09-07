@@ -9,6 +9,7 @@
 // Two things still have to happen inside the sandbox, and both are here:
 // install the gateway's CA so the forged vendor leaves validate, and prove the
 // tunnel is actually live before anyone trusts a receipt.
+import { promises as dns } from 'node:dns'
 import type { Sandbox } from '@daytona/sdk'
 import { ReceiptIntegrityError, SnapshotUnsupportedError, VerisError } from './errors'
 import {
@@ -65,6 +66,26 @@ export function gatewayProxyUrl(credential: {
       { phase: 'credential-mint' })
   }
   return `http://${encodeURIComponent(credential.username)}:x@${credential.connect_address}`
+}
+
+/**
+ * The gateway's IPv4 addresses, which strict mode pins Daytona to.
+ *
+ * The credential's own list wins: the control plane publishes the reserved
+ * load-balancer address behind the gateway hostname, and that is the authority
+ * on where the gateway is. A control plane that predates the field gets one
+ * DNS lookup of the proxy host from here — the caller's resolver is a weaker
+ * source, but it is what an older plane leaves. Empty when neither answers;
+ * buildNetwork turns that into the error that names the fix.
+ */
+export async function gatewayIps(
+  credential: { gateway_ips?: string[] },
+  proxyUrl: string,
+): Promise<string[]> {
+  if (credential.gateway_ips?.length) return credential.gateway_ips
+  const host = new URL(proxyUrl).hostname
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return [host]
+  try { return await dns.resolve4(host) } catch { return [] }
 }
 
 /**

@@ -29,8 +29,6 @@ export interface RunOptions {
   setup?: string
   /** Services the receipt must show traffic for. Empty: any service will do. */
   requireService: string[]
-  /** Extra hostnames the sandbox may reach. */
-  allowOut: string[]
   /** KEY=VALUE pairs exported to the setup and main commands. */
   env: Record<string, string>
   /** Keep the sandbox and twin after the run, and print how to reach them. */
@@ -56,7 +54,6 @@ Veris twin, then prints what the twin received.
   --snapshot <name>         Daytona snapshot to run in
   --setup <cmd>             shell command run first, e.g. 'npm ci' or 'pip install -e .'
   --require-service <name>  the receipt must show this service (repeatable; default: any)
-  --allow-out <host>        extra hostname the sandbox may reach (repeatable)
   --env KEY=VALUE           exported to the setup and main commands (repeatable)
   --timeout <seconds>       how long <command> may run (default: ${DEFAULT_TIMEOUT_SECONDS})
   --keep                    leave the sandbox and twin running afterwards
@@ -73,7 +70,7 @@ export class UsageError extends Error {}
 /** Parse everything after `run`. Pure; throws UsageError with a human message. */
 export function parseRunArgs(argv: readonly string[]): RunOptions {
   const opts: RunOptions = {
-    requireService: [], allowOut: [], env: {}, keep: false,
+    requireService: [], env: {}, keep: false,
     timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, command: '',
   }
   const sep = argv.indexOf('--')
@@ -97,7 +94,6 @@ export function parseRunArgs(argv: readonly string[]): RunOptions {
       case '--snapshot': opts.snapshot = takeValue(i++, flag); break
       case '--setup': opts.setup = takeValue(i++, flag); break
       case '--require-service': opts.requireService.push(takeValue(i++, flag)); break
-      case '--allow-out': opts.allowOut.push(takeValue(i++, flag)); break
       case '--env': {
         const pair = takeValue(i++, flag)
         const eq = pair.indexOf('=')

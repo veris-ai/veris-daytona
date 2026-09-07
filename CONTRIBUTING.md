@@ -147,7 +147,7 @@ cross-dependency in `scripts/version.mjs` to an exact pin before releasing 1.0.0
   commit messages are discarded by the merge.
 - [Semantic Versioning](https://semver.org/). Both packages version together.
 - Comments explain *why*, not *what*. Several decisions in this repo look wrong
-  until you know the constraint behind them — the inverted allowlist, the absent
+  until you know the constraint behind them — the address-only allowlist, the absent
   `--strict`, the `user:password` userinfo — and each carries the reason it is
   that way. If you change one, change its reason.
 
