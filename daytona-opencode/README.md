@@ -38,15 +38,22 @@ Veris receipt — twin sbx_a1b2c3
     POST /v1/charges -> 200
 ```
 
-This is the tool that separates a real integration from a plausible-looking one.
-Ask an agent to call the Stripe API and it will report success whether or not it
-made the call — the transcripts are identical. The receipts are not:
+Receipts are bounded views of the twin's request log, including earlier work and
+control traffic. Take a baseline and read again after the application's own flow;
+a nonzero total alone does not prove that flow ran. The full view shows at most
+20 entries per service; the service-filtered view shows at most 50 and omits the
+twin id. At zero total traffic, the full view omits service names as well; use
+`verisTwin` to discover them. Keep response/state assertions and obtain raw trace
+data when the summary cannot attribute new requests.
+
+A successful application exit needs matching twin evidence. For example, an empty
+service log leaves arrival unproven:
 
 ```
 Receipt for 'stripe': ZERO requests.
 
-The twin was reachable and answered nothing — the code under test never called
-it. Do not report this change as working.
+No requests appear in this returned service log; arrival for the current run is unproven.
+Do not report this change as working.
 ```
 
 The system prompt tells the agent to check it before claiming an integration
@@ -84,11 +91,12 @@ session's twin. OpenCode does not merely refuse a denied tool when it is called
 Set them yourself in `opencode.json` and your values win; the plugin only fills
 in what you have not.
 
-Every one of these calls is made from your machine, never from inside the
-sandbox. The twin's control plane is deliberately unreachable from the sandbox:
-code that could reach `/veris/reset` could erase its own receipt.
+MCP calls run on your machine. Direct control-plane URLs may be blocked from the
+sandbox, but that does not guarantee every `/veris/*` route is inaccessible through
+an intercepted vendor hostname. Control-route reachability depends on the gateway.
+Do not treat a receipt as a tamper-proof log or reset the twin to clear a baseline.
 
-## Why the sandbox cannot reach the real vendor
+## Network interception
 
 The sandbox is created with a `domainAllowList` — the vendor hostnames the twin
 answers for, the Veris gateway, the twin's data planes, and package registries —
@@ -104,48 +112,43 @@ if you want the same thing without an agent.
 
 This is a fork of `@daytona/opencode` 0.192.0 (Apache-2.0, Copyright Daytona
 Platforms Inc.), and a deliberately small one: one changed import, two added
-tools, a config hook, two paragraphs in the system prompt, and a check that the
+tools, a config hook, provider instructions in the system prompt, and a check that the
 Veris coordinates are set. The ten inherited tools, the git-sync flow and the session
 bookkeeping are untouched, so upstream changes stay easy to take.
 
-## Adding Veris's own plugin alongside
+## Adding Veris's skills alongside
 
-[`@veris-ai/veris-sim-opencode`](https://www.npmjs.com/package/@veris-ai/veris-sim-opencode) is
-Veris's engine-independent OpenCode plugin, from
-[veris-ai/plugins](https://github.com/veris-ai/plugins/tree/main/veris-sim). It
-carries Veris's own workflow for testing against twins — how to read what a
-vendor does, seed the state a test needs, inject faults, and write up the
-evidence — none of which is specific to where the code runs.
+The canonical workflows live in
+[veris-ai/plugins](https://github.com/veris-ai/plugins/tree/main/veris).
+[Plugins PR #49](https://github.com/veris-ai/plugins/pull/49) adds session-aware
+loading and names the next skills package `@veris-ai/veris-opencode`, matching
+`veris` in Claude and Codex. As checked on 2026-09-04, that name is not yet
+published; the configuration below requires its first release:
 
-The two compose. Put both in the same list:
-
-```jsonc
-// opencode.json
+```json
 {
   "plugin": [
-    "@veris-ai/daytona-opencode",
-    "@veris-ai/veris-sim-opencode"
+    "@veris-ai/daytona-opencode@latest",
+    "@veris-ai/veris-opencode@latest"
   ]
 }
 ```
 
-Only one `veris` MCP server ends up registered: both plugins claim the name with
-`??=`, so whichever loads first wins and the second is a no-op.
+Use `/veris:setup`, `/veris:build <request>` and `/veris:fix <request>`. The skills
+verify and reuse this session's twin, load their installed references through a
+host-side resource tool, and require evidence from the current application run.
+They do not provision another sandbox or tear down this plugin's resources.
+Finish by saving the evidence and awaiting `gitSync`; ignored files do not return
+through git automatically. The skills adapter registers no MCP, so this provider's
+existing server and user permissions remain in charge.
 
-**What you gain, precisely.** Three slash commands — `/veris-sim:setup`,
-`/veris-sim:build`, `/veris-sim:fix` — and the reference material they read: the
-twin's control surface, seeding rows and files, fault rows, webhooks, the shape
-of a PR's evidence section. You do not gain anything the agent reaches on its
-own. `veris-reference` is marked `disable-model-invocation`, so the model will
-not load it unless one of those commands sends it there.
+The published `@veris-ai/veris-sim-opencode` 0.7.0 package uses old commands and
+host-file templates. After the new release, replace that entry in both global and
+project configs where present, restart OpenCode, and record resolved versions.
+Do not load both skills packages or manually skip old lifecycle instructions to
+simulate the new workflow. Install only one sandbox provider plugin per session.
 
-**One thing to ignore.** Those commands were written for a session that has to
-provision its own twin, so they begin by creating one. Here that step is already
-done — the twin came up with the sandbox, and `create_sandbox` is denied — so
-the agent should skip straight to the part that reads the twin.
-
-If you only want the twin knowledge, you do not need this package at all:
-`verisTwin` returns a service's manual directly.
+`verisTwin` still returns service manuals without the skills package.
 
 ## Limitations
 
@@ -154,8 +157,13 @@ If you only want the twin knowledge, you do not need this package at all:
 - **Git sync into the sandbox can fail with `Host key verification failed`.**
   Inherited from upstream; the agent works, but local changes are not pushed
   into the sandbox. Setting `DAYTONA_SSH_KNOWN_HOSTS` is the likely fix.
-- **QUIC/HTTP3 and ECH are not intercepted.** Both are reported in the receipt's
-  `leaks` rather than silently omitted.
+- **Receipt blind spots.** QUIC/HTTP3 and ECH are reported in `leaks`. Preserve
+  the receipt's mode, integrity and blind spots when describing what was verified.
+- **Published trust support differs from this source.** The 0.2.1 SDK already
+  installs a combined CA bundle and attempts system-store setup, but lacks the
+  newer `NODE_OPTIONS` trust flag. A runtime needing that fix requires a later
+  published SDK; do not disable TLS verification or overwrite the plugin's trust
+  configuration to get a green run.
 
 ## License
 
