@@ -11,6 +11,7 @@
 //
 // Argument parsing and the receipt verdict are pure, so they are unit tested
 // without a Daytona account. Everything that touches the network is in cli.ts.
+import { verisNodeOptions } from './trust'
 import type { Receipt } from './receipt'
 
 export interface RunOptions {
@@ -226,5 +227,12 @@ export function shellQuote(s: string): string {
  * comes last and wins.
  */
 export function commandEnv(trust: Record<string, string>, user: Record<string, string>): Record<string, string> {
-  return { ...trust, ...user }
+  const env = { ...trust, ...user }
+  // NODE_OPTIONS is set on the sandbox at create, so a command inherits the
+  // trust flag and the proxy preload — until a caller passes its own value,
+  // which replaces the variable wholesale and takes the vendor calls with it.
+  // Merge ours back in rather than let `--env NODE_OPTIONS=--experimental-vm-modules`
+  // turn every Node vendor call into a certificate or DNS error.
+  if (typeof user.NODE_OPTIONS === 'string') env.NODE_OPTIONS = verisNodeOptions(user.NODE_OPTIONS)
+  return env
 }

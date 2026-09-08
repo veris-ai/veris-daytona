@@ -209,9 +209,77 @@ export const NODE_TRUST_FLAG = '--use-openssl-ca'
 
 /** NODE_OPTIONS with the trust flag appended to whatever the caller set. */
 export function nodeOptionsWithTrust(existing?: string): string {
+  return appendFlag(existing, NODE_TRUST_FLAG)
+}
+
+/**
+ * Where the proxy preload lands in the sandbox. World-readable, like the CA
+ * bundle: anything that starts a Node process can name it.
+ */
+export const NODE_PROXY_PRELOAD = '/tmp/veris-node-proxy.cjs'
+
+/** The NODE_OPTIONS flag that loads it before the application's first line. */
+export const NODE_PROXY_FLAG = `--require ${NODE_PROXY_PRELOAD}`
+
+/**
+ * NODE_USE_ENV_PROXY reaches exactly two things: Node's global agents and the
+ * global fetch dispatcher. An SDK that constructs its own http(s).Agent — the
+ * usual way to get keep-alive pooling; stripe-node, the AWS SDK's Node handler
+ * and Twilio's client all do — never sees the proxy, resolves the vendor host
+ * itself, and dies on Daytona's blocked egress with EAI_AGAIN. Measured with
+ * stripe-node 15 in a wired sandbox: the global agent 200, its own agent
+ * EAI_AGAIN, its own agent with `proxyEnv: process.env` 200.
+ *
+ * So every Agent is given the proxy environment at construction, from a
+ * preload Node loads before the application: subclass the two Agent classes
+ * and default `proxyEnv` to the process environment. `proxyEnv` is Node 24+;
+ * older Node ignores the option, which is also where NODE_USE_ENV_PROXY is
+ * inert, so nothing regresses there. A caller's own `proxyEnv` wins because
+ * the spread comes after ours. Clients built on undici Pools or Clients hold
+ * their own dispatcher and are not covered here.
+ */
+export function nodeProxyPreloadScript(): string {
+  return [
+    `// Preloaded by @veris-ai/daytona through NODE_OPTIONS=--require.`,
+    `// Gives every http(s).Agent the proxy environment, which Node applies only`,
+    `// to its global agents under NODE_USE_ENV_PROXY=1. An SDK that builds its own`,
+    `// Agent would otherwise dial the vendor directly, which this sandbox cannot.`,
+    `for (const mod of [require("http"), require("https")]) {`,
+    `  const Base = mod.Agent`,
+    `  mod.Agent = class Agent extends Base {`,
+    `    constructor(options) {`,
+    `      super({ proxyEnv: process.env, ...(options || {}) })`,
+    `    }`,
+    `  }`,
+    `}`,
+    ``,
+  ].join('\n')
+}
+
+/** NODE_OPTIONS with the proxy preload appended to whatever the caller set. */
+export function nodeOptionsWithProxy(existing?: string): string {
+  return appendFlag(existing, NODE_PROXY_FLAG)
+}
+
+/**
+ * The NODE_OPTIONS a wired sandbox needs, merged into the caller's own: the
+ * proxy preload always, the trust flag when the CA is installed. Appended,
+ * never replaced, and never twice — a caller's `--max-old-space-size` or
+ * `--experimental-vm-modules` keeps working beside ours. Use it wherever a
+ * NODE_OPTIONS value is built for a command in the sandbox, so setting one
+ * for the application cannot silently drop what makes its vendor calls work.
+ */
+export function verisNodeOptions(existing?: string, opts: { trust?: boolean } = {}): string {
+  const withProxy = nodeOptionsWithProxy(existing)
+  return opts.trust === false ? withProxy : nodeOptionsWithTrust(withProxy)
+}
+
+function appendFlag(existing: string | undefined, flag: string): string {
   const base = (existing ?? '').trim()
-  if (base.split(/\s+/).includes(NODE_TRUST_FLAG)) return base
-  return base ? `${base} ${NODE_TRUST_FLAG}` : NODE_TRUST_FLAG
+  // A flag with an argument (`--require <path>`) is two words once split, so
+  // check the whole string rather than the token list.
+  if (base === flag || base.startsWith(`${flag} `) || base.endsWith(` ${flag}`) || base.includes(` ${flag} `)) return base
+  return base ? `${base} ${flag}` : flag
 }
 
 /**

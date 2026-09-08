@@ -227,6 +227,9 @@ describe('create() cleans up after a build that failed', () => {
     // Node ignores the proxy variables unless told to, and Daytona blocks a
     // direct dial, so this is what lets plain https.get/fetch reach the gateway.
     expect((params.envVars as Record<string, string>).NODE_USE_ENV_PROXY).toBe('1')
+    // ...and that variable reaches only the global agents. The preload gives
+    // every http(s).Agent the proxy env; the trust flag rides beside it.
+    expect((params.envVars as Record<string, string>).NODE_OPTIONS).toBe('--require /tmp/veris-node-proxy.cjs --use-openssl-ca')
   })
 
   it('deletes the leaked sandbox and names the reason Daytona recorded', async () => {

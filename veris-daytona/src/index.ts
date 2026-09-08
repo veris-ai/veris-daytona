@@ -40,8 +40,10 @@ export type { ServiceInfo as VerisServiceInfo, RouteEntry, TwinSandbox } from '.
 export { ControlPlane } from './control-plane'
 export {
   CA_CERT_PATH, SYSTEM_BUNDLE, VERIS_BUNDLE, VERIS_CA_FILE, NODE_TRUST_FLAG,
+  NODE_PROXY_PRELOAD, NODE_PROXY_FLAG,
   BUNDLED_CA_FILES, BUNDLED_CA_PATCH_SCRIPT,
-  nodeOptionsWithTrust, vendoredTrustEnv, trustPrelude,
+  nodeOptionsWithTrust, nodeOptionsWithProxy, verisNodeOptions, nodeProxyPreloadScript,
+  vendoredTrustEnv, trustPrelude,
 } from './trust'
 export { gatewayIps, gatewayProxyUrl, patchBundledCas } from './gateway'
 export {

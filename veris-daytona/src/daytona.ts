@@ -27,8 +27,8 @@ import type { VerisApi, VerisContext } from './veris-api'
 import { buildNetwork, dataPlaneEnv, isHttpUrl } from './network'
 import type { EgressMode } from './network'
 import { fetchWatermark } from './receipt'
-import { CA_CERT_PATH, nodeOptionsWithTrust, sanitizeTrustEnv } from './trust'
-import { gatewayIps, gatewayProxyUrl, installCa, probeCanary } from './gateway'
+import { CA_CERT_PATH, sanitizeTrustEnv, verisNodeOptions } from './trust'
+import { gatewayIps, gatewayProxyUrl, installCa, installNodeProxyPreload, probeCanary } from './gateway'
 import { MissingCredentialsError, VerisError, VerisGatewayNotOfferedError } from './errors'
 import { requireVerisCredentials, resolveVerisCredentials } from './profile'
 import { SDK_VERSION } from './version'
@@ -213,9 +213,12 @@ export class Daytona extends BaseDaytona {
       const verisManaged: Record<string, string> = {
         ...(v.installCa !== false ? sanitizeTrustEnv(undefined) : {}),
         // Node reads none of the variables above once Daytona has overwritten
-        // them; the flag makes it read OpenSSL's store, which the CA install
-        // fills. Appended, not replaced: a caller's own NODE_OPTIONS keep working.
-        ...(v.installCa !== false ? { NODE_OPTIONS: nodeOptionsWithTrust(rest.envVars?.NODE_OPTIONS) } : {}),
+        // them; the trust flag makes it read OpenSSL's store, which the CA
+        // install fills. The preload gives every http(s).Agent the proxy
+        // environment, which NODE_USE_ENV_PROXY below reaches only for the
+        // global ones. Appended, not replaced: a caller's own NODE_OPTIONS keep
+        // working.
+        NODE_OPTIONS: verisNodeOptions(rest.envVars?.NODE_OPTIONS, { trust: v.installCa !== false }),
         // Node ignores HTTPS_PROXY unless told to, and Daytona blocks anything
         // that dials out directly — so without this every plain `https.get`
         // and `fetch` in Node 24+ dies with ECONNRESET instead of reaching
@@ -267,7 +270,8 @@ export class Daytona extends BaseDaytona {
     // 4. Trust the gateway's CA, then prove the tunnel is live. Until the canary
     //    answers, nothing about this sandbox is worth believing.
     try {
-      await installCa(sandbox, credential.ca_pem)
+      if (v.installCa !== false) await installCa(sandbox, credential.ca_pem)
+      else await installNodeProxyPreload(sandbox)
       await probeCanary(sandbox, credential.canary_host, twin.id)
     } catch (err) {
       await sandbox.delete().catch(() => {})

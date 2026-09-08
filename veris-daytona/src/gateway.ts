@@ -14,7 +14,7 @@ import type { Sandbox } from '@daytona/sdk'
 import { ReceiptIntegrityError, SnapshotUnsupportedError, VerisError } from './errors'
 import {
   BUNDLED_CA_PATCHED_MARKER, BUNDLED_CA_PATCH_SCRIPT, CA_CERT_PATH, CA_INSTALL_CMD,
-  SYSTEM_BUNDLE, VERIS_BUNDLE, VERIS_CA_FILE, bundledCaPatchScript,
+  NODE_PROXY_PRELOAD, SYSTEM_BUNDLE, VERIS_BUNDLE, VERIS_CA_FILE, bundledCaPatchScript, nodeProxyPreloadScript,
 } from './trust'
 
 /** A canary hostname must look like a hostname before it goes in a shell command. */
@@ -152,6 +152,7 @@ export async function installCa(sandbox: Sandbox, caPem: string): Promise<void> 
   // than only in this SDK means anything with a shell can re-run it after an
   // install — see patchBundledCas below, and BUNDLED_CA_PATCH_SCRIPT.
   await sandbox.fs.uploadFile(Buffer.from(bundledCaPatchScript(), 'utf8'), BUNDLED_CA_PATCH_SCRIPT)
+  await installNodeProxyPreload(sandbox)
 
   const script = [
     `chmod 0644 ${VERIS_CA_FILE}`,
@@ -179,6 +180,15 @@ export async function installCa(sandbox: Sandbox, caPem: string): Promise<void> 
       `cannot be trusted (${(r.result ?? '').trim().slice(0, 200)})`,
       { phase: 'ca-install' })
   }
+}
+
+/**
+ * Put the Node proxy preload where NODE_OPTIONS names it. Separate from the
+ * CA install because it is about routing, not trust: a sandbox created with
+ * installCa: false still needs its Node SDKs to reach the gateway.
+ */
+export async function installNodeProxyPreload(sandbox: Sandbox): Promise<void> {
+  await sandbox.fs.uploadFile(Buffer.from(nodeProxyPreloadScript(), 'utf8'), NODE_PROXY_PRELOAD)
 }
 
 /**
