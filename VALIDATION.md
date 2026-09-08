@@ -9,7 +9,7 @@ No package was published and no PR was merged.
 Current npm `latest` remains **0.2.1** for both packages. The downloaded
 published SDK tarball has no `bin` and reads one default receipt page; the published
 OpenCode receipt accepts only `service`, truncates display, and has no run selector.
-Daytona main already had a CLI, ID pagination, watermarks and capped reporting;
+Daytona main already had ID pagination, watermarks and capped reporting;
 this change retains that work and reviews its handling of malformed/short/stalled
 pages. E2B stays SDK-only, matching [plugins #48](https://github.com/veris-ai/plugins/pull/48).
 
@@ -36,9 +36,8 @@ response/state evidence gates. No canonical skill files were edited or copied he
 - `npm run test:packages`: inspect and install both exact tarballs into a clean temp
   directory, with no workspace links. Verify public SDK import/version, compiled
   plugin tools, no bundled node_modules, and package size under the release limit.
-- The packed CLI declares `veris-daytona`, includes executable `dist/cli.js`,
-  and a clean installation runs `provision`, `push`, `exec`, and `teardown`
-  `--help` successfully without provider credentials.
+- Neither package declares a `bin`: the packed SDK ships no `dist/cli.js`, and a
+  clean installation exposes the library import only.
 - `scripts/test-composition.mjs`, run with Bun against that clean installation
   plus the packed skills candidate: both plugin load orders, all three `/veris:*`
   commands, host-side canonical entrypoints/references/helper hashes, remote

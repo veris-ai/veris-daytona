@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  DAYTONA_API_URL, DELETE_SANDBOXES, canDeleteSandboxes, cannotTeardownWarning, daytonaApiUrl, fetchDaytonaKey,
+  DAYTONA_API_URL, DELETE_SANDBOXES, canDeleteSandboxes, daytonaApiUrl, fetchDaytonaKey,
 } from '../../src/daytona-key'
 
 /** What GET /api/api-keys/current returned for the key the trial provisioned with. */
@@ -61,29 +61,5 @@ describe('canDeleteSandboxes', () => {
     expect(canDeleteSandboxes({ name: 'k', permissions: ['write:sandboxes', DELETE_SANDBOXES] })).toBe(true)
     expect(canDeleteSandboxes(WRITE_ONLY)).toBe(false)
     expect(canDeleteSandboxes(undefined)).toBeUndefined()
-  })
-})
-
-describe('the warning provision prints before creating a box this key cannot delete', () => {
-  // Measured: a key with permissions ["write:sandboxes"] provisions fine and
-  // then fails every teardown with a bare "Access denied". The user should
-  // learn that before the box exists.
-  const w = cannotTeardownWarning(WRITE_ONLY, 30, 60)
-
-  it('names the key, its permissions and the one it lacks', () => {
-    expect(w).toContain('"veris-trial"')
-    expect(w).toContain('permissions: write:sandboxes')
-    expect(w).toContain(`\`${DELETE_SANDBOXES}\``)
-  })
-
-  it('says teardown will be refused, and what the box does instead', () => {
-    expect(w).toContain('`veris-daytona teardown` will be refused')
-    expect(w).toContain('stops after 30 idle minutes')
-    expect(w).toContain('deleted 60 minutes after it stops')
-  })
-
-  it('says how to fix it, at the page where keys are made', () => {
-    expect(w).toContain('https://app.daytona.io/dashboard/keys')
-    expect(w).toContain('"delete sandboxes" permission')
   })
 })

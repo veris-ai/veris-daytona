@@ -541,8 +541,8 @@ export function sandboxCreateMessage(
   }
   parts.push(failed.deleted
     ? `The half-built sandbox ${failed.id} was deleted.`
-    : `The half-built sandbox ${failed.id} could not be deleted — remove it with ` +
-      `\`veris-daytona teardown ${failed.id}\`.`)
+    : `The half-built sandbox ${failed.id} could not be deleted — remove it ` +
+      'from the Daytona dashboard.')
 
   const raw = cause instanceof Error ? cause.message : ''
   if (raw) parts.push(`(Daytona SDK: ${raw})`)

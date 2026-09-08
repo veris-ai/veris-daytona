@@ -150,8 +150,8 @@ describe('sandboxCreateMessage carries the reason Daytona supplied', () => {
   it('says the leaked box is gone, and names it either way', () => {
     expect(sandboxCreateMessage(SDK_ERROR, failed)).toContain('The half-built sandbox dtn_1 was deleted')
     const kept = sandboxCreateMessage(SDK_ERROR, { ...failed, deleted: false })
-    expect(kept).toContain('could not be deleted')
-    expect(kept).toContain('veris-daytona teardown dtn_1')
+    expect(kept).toContain('sandbox dtn_1 could not be deleted')
+    expect(kept).toContain('from the Daytona dashboard')
   })
 
   it('is the bare message when Daytona made nothing to report on', () => {

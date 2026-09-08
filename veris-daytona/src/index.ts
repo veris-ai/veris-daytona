@@ -51,7 +51,7 @@ export {
 } from './profile'
 export type { VerisCredentials, ResolveOpts, ProfileFile } from './profile'
 export {
-  DAYTONA_API_URL, DELETE_SANDBOXES, daytonaApiUrl, fetchDaytonaKey, canDeleteSandboxes, cannotTeardownWarning,
+  DAYTONA_API_URL, DELETE_SANDBOXES, daytonaApiUrl, fetchDaytonaKey, canDeleteSandboxes,
 } from './daytona-key'
 export type { DaytonaKeyInfo } from './daytona-key'
 export { fetchManual, assertHttpControlPlane } from './state'
