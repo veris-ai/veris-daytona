@@ -130,3 +130,17 @@ describe('commandEnv', () => {
     expect(env).toEqual({ SSL_CERT_FILE: '/mine.pem', A: '1' })
   })
 })
+
+describe('commandEnv', () => {
+  it("merges the sandbox's NODE_OPTIONS back into a caller's own, instead of letting --env replace them", () => {
+    // NODE_OPTIONS is set on the sandbox at create; `--env NODE_OPTIONS=…` for
+    // one command would otherwise drop the proxy preload and the trust flag
+    // and turn every Node vendor call into a DNS or certificate error.
+    const env = commandEnv({ SSL_CERT_FILE: '/tmp/veris-ca-bundle.crt' }, { NODE_OPTIONS: '--experimental-vm-modules' })
+    expect(env.NODE_OPTIONS).toBe('--experimental-vm-modules --require /tmp/veris-node-proxy.cjs --use-openssl-ca')
+    expect(env.SSL_CERT_FILE).toBe('/tmp/veris-ca-bundle.crt')
+  })
+  it('leaves the variable alone when the caller did not set it (the sandbox value is inherited)', () => {
+    expect(commandEnv({ A: '1' }, { B: '2' })).toEqual({ A: '1', B: '2' })
+  })
+})

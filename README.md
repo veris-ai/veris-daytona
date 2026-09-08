@@ -164,6 +164,19 @@ listener.
   value; both consult the system directory as well. Node also needs
   `NODE_USE_ENV_PROXY=1`, set at create time: Node ignores the proxy variables
   otherwise, and Daytona blocks a direct dial.
+- **Node SDKs that build their own agent.** `NODE_USE_ENV_PROXY` reaches only
+  Node's global agents and the global `fetch` dispatcher. An SDK that
+  constructs its own `http(s).Agent` for keep-alive pooling (stripe-node, the
+  AWS SDK's Node handler, Twilio's client) never sees the proxy, resolves the
+  vendor host itself, and dies on the blocked egress with `EAI_AGAIN`. Measured
+  with stripe-node 15: the global agent 200, its own agent `EAI_AGAIN`, its own
+  agent with `proxyEnv: process.env` 200. So every sandbox carries
+  `/tmp/veris-node-proxy.cjs`, a preload that subclasses both Agent classes to
+  default `proxyEnv` to the process environment, and `NODE_OPTIONS` names it
+  with `--require` beside `--use-openssl-ca`. Both flags are appended to a
+  caller's own `NODE_OPTIONS`, never replacing them, and `exec` merges them
+  back into a `--env NODE_OPTIONS=…` override. Clients built on undici `Pool`
+  or `Client` hold their own dispatcher and are not covered.
 - **An SDK that bundles its own CA reads no variable at all.** stripe-python
   passes `verify=stripe.ca_bundle_path`, so the trust variables never reach it
   and the first Stripe call fails with "Could not verify Stripe's SSL

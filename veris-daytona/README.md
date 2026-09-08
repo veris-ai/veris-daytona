@@ -243,6 +243,35 @@ for you, between `--setup` and the command; a sandbox from `provision` carries
 the same patcher as a script at `/tmp/veris-patch-bundled-cas.sh`, so whoever
 installed the dependencies can run it with no SDK in hand.
 
+### Node, and what `NODE_OPTIONS` carries
+
+Three things make a Node process in the sandbox reach the twin, and the SDK
+sets all of them at create time:
+
+| variable | why |
+|---|---|
+| `NODE_USE_ENV_PROXY=1` | Node ignores `HTTPS_PROXY` otherwise, and Daytona blocks a direct dial |
+| `NODE_OPTIONS=--require /tmp/veris-node-proxy.cjs` | `NODE_USE_ENV_PROXY` reaches only the global agents; the preload gives every `http(s).Agent` the proxy environment, which is what an SDK with its own keep-alive agent (stripe-node, the AWS SDK, Twilio) needs |
+| `NODE_OPTIONS=--use-openssl-ca` | Daytona overwrites `NODE_EXTRA_CA_CERTS`; this makes Node read the system store the Veris CA is installed into |
+
+`NODE_OPTIONS` is one variable, so an application that sets its own value for
+a command (`--experimental-vm-modules`, `--max-old-space-size`) would drop
+both flags and every vendor call would fail on DNS or on the certificate. Build
+the value with `verisNodeOptions(yourOptions)`, which appends the two flags
+once, or pass it through `exec --env NODE_OPTIONS=…`, which merges them for
+you:
+
+```ts
+import { verisNodeOptions } from '@veris-ai/daytona'
+await sbx.process.executeCommand('npx jest', cwd, {
+  ...sbx.veris.getTrustEnv(),
+  NODE_OPTIONS: verisNodeOptions('--experimental-vm-modules'),
+})
+```
+
+Clients built on undici `Pool` or `Client` hold their own dispatcher and are
+not covered by the preload.
+
 ## Options
 
 ```ts

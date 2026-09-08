@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
-  sanitizeTrustEnv, vendoredTrustEnv, nodeOptionsWithTrust, trustPrelude, bundledCaPatchScript,
-  NODE_TRUST_FLAG, SYSTEM_BUNDLE, CA_CERT_PATH, VERIS_BUNDLE, VERIS_CA_FILE,
+  sanitizeTrustEnv, vendoredTrustEnv, nodeOptionsWithTrust, nodeOptionsWithProxy, verisNodeOptions,
+  nodeProxyPreloadScript, trustPrelude, bundledCaPatchScript,
+  NODE_TRUST_FLAG, NODE_PROXY_FLAG, NODE_PROXY_PRELOAD, SYSTEM_BUNDLE, CA_CERT_PATH, VERIS_BUNDLE, VERIS_CA_FILE,
   BUNDLED_CA_FILES, BUNDLED_CA_PATCHED_MARKER,
 } from '../../src/trust'
 
@@ -58,6 +59,41 @@ describe('nodeOptionsWithTrust', () => {
   })
   it('is not a served trust var: the control plane cannot set NODE_OPTIONS', () => {
     expect(sanitizeTrustEnv({ NODE_OPTIONS: '--require /evil.js' })).not.toHaveProperty('NODE_OPTIONS')
+  })
+})
+
+describe('the Node proxy preload', () => {
+  // Measured with stripe-node 15 in a wired sandbox: the global agent reached
+  // the gateway (200), the SDK's own `new https.Agent({ keepAlive: true })`
+  // resolved api.stripe.com itself and died with EAI_AGAIN, and the same agent
+  // with `proxyEnv: process.env` reached the gateway (200). NODE_USE_ENV_PROXY
+  // covers only the global agents, so every Agent gets the option at birth.
+  it('subclasses both Agent classes and defaults proxyEnv to the process env', () => {
+    const script = nodeProxyPreloadScript()
+    expect(script).toContain('require("http")')
+    expect(script).toContain('require("https")')
+    expect(script).toContain('proxyEnv: process.env')
+    // The caller's own options come after ours, so an explicit proxyEnv wins.
+    expect(script).toMatch(/\{ proxyEnv: process\.env, \.\.\.\(options \|\| \{\}\) \}/)
+  })
+  it('is a CommonJS file Node can --require before ESM or TypeScript loaders', () => {
+    expect(NODE_PROXY_PRELOAD).toMatch(/\.cjs$/)
+    expect(NODE_PROXY_FLAG).toBe(`--require ${NODE_PROXY_PRELOAD}`)
+    expect(nodeProxyPreloadScript()).not.toContain('import ')
+  })
+  it('appends the require flag to the caller\'s NODE_OPTIONS, once', () => {
+    expect(nodeOptionsWithProxy(undefined)).toBe(NODE_PROXY_FLAG)
+    expect(nodeOptionsWithProxy('--experimental-vm-modules')).toBe(`--experimental-vm-modules ${NODE_PROXY_FLAG}`)
+    expect(nodeOptionsWithProxy(`${NODE_PROXY_FLAG} --inspect`)).toBe(`${NODE_PROXY_FLAG} --inspect`)
+    expect(nodeOptionsWithProxy(`--inspect ${NODE_PROXY_FLAG} --x`)).toBe(`--inspect ${NODE_PROXY_FLAG} --x`)
+  })
+  it('verisNodeOptions carries the preload always and the trust flag unless the CA install is off', () => {
+    expect(verisNodeOptions(undefined)).toBe(`${NODE_PROXY_FLAG} ${NODE_TRUST_FLAG}`)
+    expect(verisNodeOptions('--max-old-space-size=4096')).toBe(`--max-old-space-size=4096 ${NODE_PROXY_FLAG} ${NODE_TRUST_FLAG}`)
+    expect(verisNodeOptions(undefined, { trust: false })).toBe(NODE_PROXY_FLAG)
+    // Idempotent: what create() wrote is what exec passes back through.
+    const once = verisNodeOptions('--experimental-vm-modules')
+    expect(verisNodeOptions(once)).toBe(once)
   })
 })
 
