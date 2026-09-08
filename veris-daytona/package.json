@@ -1,6 +1,6 @@
 {
   "name": "@veris-ai/daytona",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Veris twin interception for Daytona: a drop-in @daytona/sdk whose sandboxes come up with a Veris twin already answering their vendor API calls. Unmodified code, real hostnames, receipts.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -12,9 +12,6 @@
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     }
-  },
-  "bin": {
-    "veris-daytona": "./dist/cli.js"
   },
   "sideEffects": false,
   "files": [
