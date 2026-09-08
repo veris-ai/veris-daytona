@@ -45,148 +45,6 @@ await sbx.delete()   // deletes the twin too
 This package re-exports everything from `@daytona/sdk`, so it is the only import
 you need to change. No particular sandbox image is required.
 
-### Or skip the code: `veris-daytona run`
-
-The same four steps as one command, for a test suite that already exists:
-
-```sh
-npx @veris-ai/daytona run --setup 'pip install -e .' -- pytest tests/integration
-```
-
-That uploads the current directory into a fresh sandbox (minus `node_modules`,
-`.venv`, `.git` and the like), runs the setup command, runs the test command
-streaming its output, prints the receipt, and deletes the sandbox and the twin.
-The exit code is the test command's — except that a green suite whose twin
-received nothing exits 1, because a pass without a receipt is not a pass.
-
-```
-Veris receipt — twin sbx_a1b2c3
-  interception: gateway   integrity: verified
-
-1 request(s) reached the twin:
-  stripe: 1 request(s)
-    POST /v1/customers -> 200
-```
-
-| flag | |
-|---|---|
-| `--repo <url> [--ref <branch>]` | clone instead of uploading; `GITHUB_TOKEN` is used for a private repo |
-| `--environment <id>` | instead of `VERIS_ENVIRONMENT_ID` |
-| `--require-service <name>` | the receipt must show this service, repeatable |
-| `--image <name>` / `--snapshot <name>` | what to run in; default is Daytona's default snapshot |
-| `--env KEY=VALUE` | exported to both commands, repeatable |
-| `--timeout <seconds>` | for the test command; default 1800 |
-| `--keep` | leave the sandbox up afterwards, and the twin if `run` made it |
-
-`veris-daytona run --help` lists everything.
-
-### Or hand the wired box to something else: `provision`, `push`, `exec`, `teardown`
-
-`run` does the whole job in one command, and it stays. But when the thing that
-installs the dependencies and runs the suite is another tool — the `veris` CLI,
-a CI step, an agent — what you want from this package is the first half only:
-
-```sh
-box=$(npx @veris-ai/daytona provision --sandbox sbx_a1b2c3 --image python:3.12)
-```
-
-That creates a sandbox attached to a twin you already have, does every
-Veris-shaped thing — the egress credential, the gateway pin, the outbound
-proxy, the CA bundle, the canary, the trust variables — and
-stops. Nothing is uploaded, nothing is run, nothing is deleted. One JSON object
-goes to stdout and every human line to stderr, so `$box` is parseable:
-
-```json
-{
-  "daytonaSandboxId": "e2a1…",
-  "verisSandboxId": "sbx_a1b2c3",
-  "verisEnvironmentId": "env_9f…",
-  "ownsTwin": false,
-  "workDir": "/home/daytona/veris-run",
-  "caBundlePath": "/tmp/veris-ca-bundle.crt",
-  "trustEnv": { "SSL_CERT_FILE": "/tmp/veris-ca-bundle.crt", "…": "…" },
-  "trustPrelude": "export SSL_CERT_FILE='/tmp/veris-ca-bundle.crt'; …",
-  "patchBundledCasCommand": "sh /tmp/veris-patch-bundled-cas.sh",
-  "pushCommand": "veris-daytona push e2a1…",
-  "execCommand": "veris-daytona exec e2a1… -- <command>",
-  "services": ["stripe", "github"],
-  "expiresAt": "2026-09-04T12:00:00.000Z",
-  "autoStopMinutes": 30,
-  "autoDeleteMinutes": 60
-}
-```
-
-| flag | |
-|---|---|
-| `--sandbox <twin-id>` | the twin to attach to — **required**; `veris up` prints its id |
-| `--image <name>` / `--snapshot <name>` | what to run in; default is Daytona's default snapshot |
-| `--env KEY=VALUE` | set as a sandbox environment variable, repeatable |
-
-From there the box is yours. Reading the receipt and deciding what it proved is
-the caller's job; that is the whole point of the split.
-
-### Getting code in and running it: `push` and `exec`
-
-Daytona has no route into a box that already exists. Their CLI (v0.210.0) has no
-upload, copy or sync command; `daytona ssh` takes exactly one argument, so there
-is no `tar | ssh` and no scp or rsync behind it; `--context` is a Docker build
-context that only exists on `create`, which `provision` owns; and `git clone`
-inside the box is a clone, not an upload of what is on your disk. So two verbs
-do it:
-
-```sh
-id=$(echo "$box" | jq -r .daytonaSandboxId)
-
-npx @veris-ai/daytona push "$id"                       # tars the cwd into workDir
-npx @veris-ai/daytona exec "$id" -- pip install -e .
-npx @veris-ai/daytona exec "$id" -- sh /tmp/veris-patch-bundled-cas.sh
-npx @veris-ai/daytona exec "$id" -- python -m pytest tests/integration
-```
-
-`push` uploads the current directory, minus what gets rebuilt inside
-(`node_modules`, `.venv`, `dist`, `__pycache__`, …), and unpacks it in the same
-`workDir` the JSON named — so the two chain without carrying the path between
-them. `--repo <url> --ref <branch>` clones instead, using `GITHUB_TOKEN` for a
-private one.
-
-`exec` runs one command with `trustEnv` already exported, which is the part that
-matters: `daytona exec` has no `--env` flag at all, so a command run through it
-inherits Daytona's own CA file and fails on the gateway's certificate unless you
-retype the trust prelude every single time. It streams output as it happens
-rather than returning at the end, takes `--cwd`, repeatable `--env KEY=VALUE`
-and `--timeout <seconds>`, and exits with the command's own status.
-
-Neither reads a receipt or passes a verdict — take a watermark before and read
-`veris sandbox trace --since` after. And once the dependencies are installed,
-run `patchBundledCasCommand` **inside the box** to patch the CA bundles an SDK
-ships with it; the script is already in there, so a shell caller needs nothing
-from this package.
-
-### Taking it back: `teardown`
-
-However it went:
-
-```sh
-npx @veris-ai/daytona teardown "$(echo "$box" | jq -r .daytonaSandboxId)"
-```
-
-`teardown` deletes the sandbox and says what it did about the twin: one this
-package created goes with it, one it attached to — always the case after
-`provision` — is yours and is left running. It exits 1 when there is no such
-sandbox, saying plainly that no twin was touched.
-
-Nothing deletes a provisioned box for you, so it comes up with its own brakes:
-it stops after 30 idle minutes, Daytona deletes it an hour after that, and it
-is destroyed 4 hours after creation whatever state it is in. The twin's TTL is
-untouched — it belongs to whoever created the twin.
-
-Deleting needs a Daytona key with the `delete:sandboxes` permission, and a key
-made with "write sandboxes" alone does not have it. `teardown` then exits 1
-saying so: which key, which permissions it has, that the box is still there,
-when its own brakes stop and delete it, what happened to the twin, and where a
-key that can delete comes from. `provision` and `run` read the key's
-permissions first and warn about the same thing *before* creating a box.
-
 ### Why `assertTouched` and not just a green suite
 
 A test suite that skipped its integration and one that exercised it look
@@ -238,8 +96,7 @@ console.log(await sbx.veris.patchBundledCas())   // ['…/stripe/data/ca-certifi
 ```
 
 Call it *after* installing dependencies — the bundles arrive with them. It is
-idempotent and returns only the files it changed. `veris-daytona run` calls it
-for you, between `--setup` and the command; a sandbox from `provision` carries
+idempotent and returns only the files it changed. Every sandbox also carries
 the same patcher as a script at `/tmp/veris-patch-bundled-cas.sh`, so whoever
 installed the dependencies can run it with no SDK in hand.
 
@@ -258,8 +115,7 @@ sets all of them at create time:
 a command (`--experimental-vm-modules`, `--max-old-space-size`) would drop
 both flags and every vendor call would fail on DNS or on the certificate. Build
 the value with `verisNodeOptions(yourOptions)`, which appends the two flags
-once, or pass it through `exec --env NODE_OPTIONS=…`, which merges them for
-you:
+once:
 
 ```ts
 import { verisNodeOptions } from '@veris-ai/daytona'
@@ -338,9 +194,8 @@ four systems involved refused:
   (services-sandbox#1044). Without it, `requests` fails with
   `Missing Authority Key Identifier` while `curl` and Node succeed.
 - **Daytona overwrites `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` and
-  `CURL_CA_BUNDLE`** with its own CA file, which lacks the Veris CA. `run`
-  exports the Veris bundle on every command it runs; a command run through
-  `sandbox.process` yourself needs `sbx.veris.getTrustEnv()` as its env, or
+  `CURL_CA_BUNDLE`** with its own CA file, which lacks the Veris CA. A command
+  run through `sandbox.process` needs `sbx.veris.getTrustEnv()` as its env, or
   `sbx.veris.trustPrelude()` in front of the command line.
 - **An SDK that bundles its own CA reads no variable at all.**
   `sbx.veris.patchBundledCas()` covers certifi, pip's vendored certifi,
@@ -351,11 +206,12 @@ four systems involved refused:
   neither yields an IPv4 address, `create()` fails at `credential-mint` naming
   `veris.egress: 'open'`, which sets no Daytona allowlist and still blocks a
   process that bypasses the proxy.
-- **`teardown` needs `delete:sandboxes` on the Daytona key.** A write-only
-  key creates boxes it cannot delete; the refusal says when Daytona's own
-  auto-stop and auto-delete will, and `provision` warns before creating one.
+- **`delete()` needs `delete:sandboxes` on the Daytona key.** A write-only
+  key creates boxes it cannot delete; `canDeleteSandboxes()` says so up front,
+  and a box it cannot delete lives until Daytona's own auto-stop and
+  auto-delete take it.
 - **A very long run's receipt is a floor.** The twin's log is read in pages up
-  to a budget; past it, `entry.capped` is true and `run` prints `≥N`.
+  to a budget; past it, `entry.capped` is true and the count is a minimum.
 
 ## License
 

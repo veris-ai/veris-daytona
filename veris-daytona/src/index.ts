@@ -54,8 +54,6 @@ export {
   DAYTONA_API_URL, DELETE_SANDBOXES, daytonaApiUrl, fetchDaytonaKey, canDeleteSandboxes, cannotTeardownWarning,
 } from './daytona-key'
 export type { DaytonaKeyInfo } from './daytona-key'
-export { isPermissionDenied, sandboxBrakes, teardownRefusedMessage } from './teardown'
-export type { RefusedTeardown } from './teardown'
 export { fetchManual, assertHttpControlPlane } from './state'
 export {
   VerisError,

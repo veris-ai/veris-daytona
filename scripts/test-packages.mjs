@@ -19,7 +19,7 @@ for (const dir of [sdkDir, `${provider}-opencode`]) {
   const required = dir === sdkDir ? ['dist/index.js', 'dist/index.cjs', 'dist/index.d.ts'] :
     ['index', `${provider}/tools/veris-twin`, `${provider}/tools/veris-receipt`, `${provider}/tools/veris-control`, `${provider}/plugins/veris-config`].map(p => `.opencode/plugin/${p}.js`)
   for (const file of required) assert(paths.includes(file), `missing ${file}`)
-  if (dir === sdkDir && provider === 'daytona') assert(paths.includes('dist/cli.js'))
+  assert(!paths.includes('dist/cli.js'), 'the SDK ships no executable')
   tarballs.push(join(stage, pack.filename))
   console.log(`${pack.name}@${pack.version}: ${pack.files.length} files, ${pack.size} bytes`)
 }
@@ -30,16 +30,5 @@ const pkg = JSON.parse(readFileSync(join(installed, 'package.json')))
 assert.equal(pkg.version, JSON.parse(readFileSync(join(sdkDir, 'package.json'))).version)
 const sdk = await import(pathToFileURL(join(installed, 'dist/index.js')))
 assert.equal(sdk.SDK_VERSION, pkg.version)
-if (provider === 'daytona') {
-  assert.equal(pkg.bin['veris-daytona'], './dist/cli.js')
-  assert.match(readFileSync(join(installed, 'dist/cli.js'), 'utf8'), /^#!\/usr\/bin\/env node/)
-  const cleanEnv = { ...process.env }
-  for (const key of Object.keys(cleanEnv)) if (/^(VERIS_|DAYTONA_|E2B_)/.test(key)) delete cleanEnv[key]
-  for (const verb of ['provision', 'push', 'exec', 'teardown']) {
-    const result = spawnSync(join(stage, 'node_modules/.bin/veris-daytona'), [verb, '--help'], { cwd: stage, env: cleanEnv, encoding: 'utf8' })
-    assert.equal(result.status, 0, result.stderr)
-    assert.match(result.stdout + result.stderr, new RegExp(`veris-daytona ${verb}`))
-    console.log(`clean install: veris-daytona ${verb} --help passed`)
-  }
-} else assert.equal(pkg.bin, undefined, 'E2B remains SDK-only')
+assert.equal(pkg.bin, undefined, 'both packages are SDK-only')
 console.log(`PACK_STAGE=${stage}`)
