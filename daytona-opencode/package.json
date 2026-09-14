@@ -41,7 +41,7 @@
     "@daytona/sdk": "^0.204.1",
     "@opencode-ai/plugin": "1.18.25",
     "xdg-basedir": "^5.1.0",
-    "zod": "^4.2.1"
+    "zod": "^4.6.2"
   },
   "devDependencies": {
     "@types/node": "^26",
