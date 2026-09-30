@@ -29,7 +29,7 @@
     "dev": "tsup --watch"
   },
   "dependencies": {
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.1"
   },
   "peerDependencies": {
     "@daytona/sdk": ">=0.204.1 <1"
