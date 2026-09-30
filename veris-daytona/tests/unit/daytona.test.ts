@@ -232,6 +232,21 @@ describe('create() cleans up after a build that failed', () => {
     expect((params.envVars as Record<string, string>).NODE_OPTIONS).toBe('--require /tmp/veris-node-proxy.cjs --use-openssl-ca')
   })
 
+  it('reads the start-of-run watermark from control_url with the Veris API key', async () => {
+    controlPlane()
+    vi.spyOn(BaseDaytona.prototype, 'create').mockImplementation(async () => { throw SDK_ERROR })
+    vi.spyOn(BaseDaytona.prototype, 'list').mockImplementation(() => (async function* () {})() as never)
+    const daytona = new Daytona({
+      apiKey: 'dtn_key', useDeprecatedPolling: true,
+      veris: { apiKey: 'veris_key', environmentId: 'env_1', apiBase: 'https://api.veris.test' },
+    })
+    await daytona.create({ image: 'x' }).catch(() => undefined)
+    const read = vi.mocked(fetch).mock.calls.find(([u]) => String(u).includes('/veris/requests'))
+    expect(read).toBeDefined()
+    expect(new URL(String(read![0])).origin).toBe('https://twin.test')
+    expect(new Headers(read![1]?.headers).get('x-api-key')).toBe('veris_key')
+  })
+
   it('deletes the leaked sandbox and names the reason Daytona recorded', async () => {
     const calls = controlPlane()
     const leaked = listRow({ errorReason: REAL_REASON })

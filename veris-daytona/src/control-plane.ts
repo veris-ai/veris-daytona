@@ -1,5 +1,6 @@
 // Typed client for the Veris control plane (svc.api.veris.ai). Only the routes
 // the SDK needs; shapes mirror the platform's public models.
+import type { ControlAuth } from './control-fetch'
 import { VerisError, VerisGatewayNotOfferedError, VerisGatewayUnreachableError, TwinExpiredError } from './errors'
 
 export interface RouteEntry {
@@ -14,8 +15,12 @@ export interface ServiceInfo {
   status: string
   /** What the code under test points at: gateway URL for http services, a DSN for e.g. postgres. */
   url: string
-  /** Where /veris/* lives — always an http URL. */
+  /** Where /veris/* lives — always an http URL. On a split sandbox this is
+   *  …/c/<sandbox>/<svc> and needs the API key (see control-fetch.ts). */
   control_url: string
+  /** "api_key" when control_url requires X-API-Key; null/absent on older
+   *  sandboxes whose control_url is still the keyless data URL. */
+  control_auth?: 'api_key' | null | (string & {})
   env_hint?: string | null
   routes?: RouteEntry[] | null
 }
@@ -82,10 +87,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export class ControlPlane {
   readonly apiBase: string
+  /** The key twin control calls (control-fetch.ts) send — the same one /v1 gets. */
+  readonly controlAuth: ControlAuth
   private readonly headers: Record<string, string>
 
   constructor(opts: ControlPlaneOpts) {
     this.apiBase = opts.apiBase.replace(/\/$/, '')
+    this.controlAuth = { apiKey: opts.apiKey }
     this.headers = {
       'X-API-Key': opts.apiKey,
       'X-Veris-SDK': opts.sdkVersion,

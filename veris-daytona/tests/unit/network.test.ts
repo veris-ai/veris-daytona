@@ -94,6 +94,13 @@ describe('twinHosts', () => {
       svc({ url: 'postgres://pg.twin.veris.ai:5432/app', control_url: 'https://ctl.twin.veris.ai' }),
     ])).toEqual(['ctl.twin.veris.ai'])
   })
+
+  // A split sandbox moves control to /c/ on the same host as the /s/ data URL.
+  it('yields one host for a split service whose control_url is /c/', () => {
+    expect(twinHosts([
+      svc({ url: 'https://svc.dev.api.veris.ai/s/t1/stripe', control_url: 'https://svc.dev.api.veris.ai/c/t1/stripe', control_auth: 'api_key' }),
+    ])).toEqual(['svc.dev.api.veris.ai'])
+  })
 })
 
 describe('dataPlaneHosts', () => {

@@ -21,16 +21,20 @@ any of them, that is a vulnerability:
   severity thing in this repo.
 - **`receipt()` never reports traffic it cannot vouch for.** Every call
   re-runs the canary probe first; a receipt read from a sandbox whose egress was
-  detached must fail, not return counts. Known gap, not a vulnerability in this
-  package: the twin's own `/veris/*` routes pass through the gateway like any
-  public host and take no credential, so code running inside the sandbox can
-  call `/veris/reset` on its own twin. That guard belongs at the gateway.
+  detached must fail, not return counts. On a split sandbox (`control_auth:
+  "api_key"`) the twin's `/veris/*` routes live only at `control_url` and require
+  the Veris API key, which the sandbox never holds. Known gap, not a
+  vulnerability in this package: an older sandbox (`control_auth` null) still
+  serves `/veris/*` keyless at its data URL, so code running inside it can call
+  `/veris/reset` on its own twin. That guard belongs at the platform.
 - **Control-plane responses are treated as untrusted input.** They are validated
   before reaching a URL, a shell command, or an environment variable — see
   `sanitizeTrustEnv`, `isSafeEnvName`, and the host/address checks in
   `gateway.ts`. A response that can inject into any of those is a vulnerability.
 - **The Veris API key is never sent to a host named by sandbox labels.** A
-  compromised sandbox must not be able to redirect it.
+  compromised sandbox must not be able to redirect it. Beyond `/v1`, it goes
+  only to the origin of each service's `control_url` as returned by the
+  authenticated API, with redirects refused (`control-fetch.ts`).
 
 ## What it is not responsible for
 

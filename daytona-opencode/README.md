@@ -103,9 +103,12 @@ session's twin. OpenCode does not merely refuse a denied tool when it is called
 Set them yourself in `opencode.json` and your values win; the plugin only fills
 in what you have not.
 
-MCP calls run on your machine. Direct control-plane URLs may be blocked from the
-sandbox, but that does not guarantee every `/veris/*` route is inaccessible through
-an intercepted vendor hostname. Control-route reachability depends on the gateway.
+MCP calls run on your machine, and so do `verisTwin`, `verisControl` and
+`verisReceipt`: they call each service's `control_url` with your Veris API key.
+On current (split) sandboxes that URL requires the key, and `/veris/*` is not
+served on the app URL or an intercepted vendor hostname, so code inside the
+sandbox cannot reach control routes. Older sandboxes (`control_auth` null) still
+serve them keyless; there, control-route reachability depends on the gateway.
 Do not treat a receipt as a tamper-proof log or reset the twin to clear a baseline.
 
 ## Network interception

@@ -60,6 +60,11 @@ export class VerisError extends Error {
 /** A required credential/coordinate is missing. Thrown before any network call, naming the exact variable. */
 export class MissingCredentialsError extends VerisError {}
 
+/** A Veris endpoint refused the API key (401) — invalid, revoked, or from an
+ *  organization that does not own the sandbox. Distinct from
+ *  MissingCredentialsError, which is thrown before any call is made. */
+export class InvalidCredentialsError extends VerisError {}
+
 /** The Veris gateway infrastructure is down (control-plane health said so). */
 export class VerisGatewayUnreachableError extends VerisError {}
 

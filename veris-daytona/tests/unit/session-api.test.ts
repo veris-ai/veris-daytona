@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VerisApiImpl } from '../../src/veris-api'
-import { svc, trace } from './trace-fixture'
+import { auth, svc, trace } from './trace-fixture'
 vi.mock('../../src/gateway', () => ({ probeCanary: vi.fn(), patchBundledCas: vi.fn() }))
 function api(twinId = 'twin') {
   return new VerisApiImpl({ sandbox: { id: 'box', sandboxId: 'box', commands: { run: async () => ({ stdout: JSON.stringify({ veris_sandbox_id: twinId }) }) } },
-    controlPlane: { services: async () => [svc] }, twinId, environmentId: 'env', mode: 'gateway', egress: 'open', canaryHost: 'canary.invalid', ownsTwin: true } as never)
+    controlPlane: { services: async () => [svc], controlAuth: auth }, twinId, environmentId: 'env', mode: 'gateway', egress: 'open', canaryHost: 'canary.invalid', ownsTwin: true } as never)
 }
 afterEach(() => vi.unstubAllGlobals())
 describe('SDK run and control interface', () => {
