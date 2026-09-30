@@ -251,3 +251,22 @@ retain application response/state assertions. Preserve mode, integrity and leaks
 `{data: {table: [rows]}}` envelope, including fault rows. Coordinates come from the
 attached twin; lifecycle and arbitrary URLs are excluded. SDK callers own write
 authorization; the OpenCode plugin applies its configured write permission.
+
+### Control-plane authentication
+
+Every `/veris/*` call — `manual`, `control`, `receipt`, `receiptBaseline`,
+`receiptSince`, the start-of-run watermark and `deliverTo`'s reachability
+probe — goes to the service's `control_url`. When the service declares
+`control_auth: "api_key"` (a split sandbox) the call carries the Veris API key as
+`X-API-Key`, the same key the SDK sends to `/v1`; there `control_url` is
+`…/c/<sandbox>/<service>`, separate from the app-facing `url`
+(`…/s/<sandbox>/<service>`), and refuses a call without the key. `/veris/*` on
+`url` or on an intercepted vendor hostname is the vendor's 404 there, so the SDK
+never tries them. When `control_auth` is null or absent (an older or pinned
+sandbox, or an API that predates the field) `control_url` is the keyless `/s/`
+data URL — the twin itself — and the key is **not** sent. The key goes only to
+the `control_url` origin and redirects are refused, so it cannot be carried
+elsewhere. A 401 surfaces as `InvalidCredentialsError` (phase
+`credentials`): the key is invalid or belongs to an organization that does not
+own the sandbox. The standalone `fetchManual(service, { apiKey })` takes the key
+as its second argument.

@@ -1,5 +1,6 @@
 import { vi } from 'vitest'
-export const svc = { name: 'stripe', status: 'ready', url: 'https://twin.invalid/stripe', control_url: 'https://twin.invalid/stripe' }
+export const auth = { apiKey: 'veris_test_key' }
+export const svc = { name: 'stripe', status: 'ready', url: 'https://twin.invalid/stripe', control_url: 'https://twin.invalid/stripe', control_auth: 'api_key' }
 export const row = (id: number, tier = 'handler', path = `/v1/items/${id}`) => ({ id, method: 'POST', path, status: 200, tier, request_headers: '{}' })
 export function trace(count = 0, options: { cap?: number; ignoreSince?: boolean; ignoreOrder?: boolean; failPage?: number } = {}) {
   let rows = Array.from({ length: count }, (_, i) => row(i + 1))

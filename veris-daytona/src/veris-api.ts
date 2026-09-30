@@ -9,7 +9,9 @@ import type { Sandbox } from '@daytona/sdk'
 import type { ControlPlane, ServiceInfo } from './control-plane'
 import { fetchReceiptEntry } from './receipt'
 import type { Receipt, ReceiptEntry, ReceiptLeak } from './receipt'
-import { VerisUntouchedError, VerisError } from './errors'
+import { InvalidCredentialsError, VerisUntouchedError, VerisError } from './errors'
+import { controlFetch } from './control-fetch'
+import type { ControlAuth } from './control-fetch'
 import { dataPlaneEnv, isHttpUrl } from './network'
 import type { EgressMode } from './network'
 import { patchBundledCas, probeCanary } from './gateway'
@@ -94,6 +96,11 @@ export class VerisApiImpl implements VerisApi {
     return this.ctx.controlPlane.services(this.ctx.twinId)
   }
 
+  /** The key every /veris/* call on a service's control_url carries. */
+  private get auth(): ControlAuth | undefined {
+    return this.ctx.controlPlane.controlAuth
+  }
+
   /** Resolve a service by name. A typo and a service that exists but saw
    *  nothing are different failures, so this throws rather than returning
    *  undefined and letting the caller report an empty result. */
@@ -109,7 +116,7 @@ export class VerisApiImpl implements VerisApi {
   }
 
   async manual(service: string): Promise<string> {
-    return fetchManual(await this.resolveService(service))
+    return fetchManual(await this.resolveService(service), this.auth)
   }
 
   receipt(): Promise<Receipt>
@@ -122,13 +129,13 @@ export class VerisApiImpl implements VerisApi {
 
     if (service !== undefined) {
       const svc = await this.resolveService(service)
-      return fetchReceiptEntry(svc, this.watermark(svc.name))
+      return fetchReceiptEntry(this.auth, svc, this.watermark(svc.name))
     }
 
     const services = await this.services()
     const entries = await Promise.all(
       services.filter((s) => isHttpUrl(s.control_url)).map(async (svc) =>
-        [svc.name, await fetchReceiptEntry(svc, this.watermark(svc.name))] as const))
+        [svc.name, await fetchReceiptEntry(this.auth, svc, this.watermark(svc.name))] as const))
     return {
       services: Object.fromEntries(entries),
       mode: 'gateway',
@@ -156,7 +163,7 @@ export class VerisApiImpl implements VerisApi {
 
   async receiptBaseline(): Promise<ReceiptBaseline> {
     await this.verifyIntegrity()
-    return captureBaseline(this.ctx.twinId, this.ctx.sandbox.id,
+    return captureBaseline(this.auth, this.ctx.twinId, this.ctx.sandbox.id,
       (await this.services()).filter(s => isHttpUrl(s.control_url)))
   }
 
@@ -166,20 +173,20 @@ export class VerisApiImpl implements VerisApi {
     if (service !== undefined && !services.some(s => s.name === service)) {
       throw new VerisError(`unknown HTTP service '${service}'`, { phase: 'receipt' })
     }
-    await validateBaseline(baseline, this.ctx.twinId, this.ctx.sandbox.id, services)
+    await validateBaseline(this.auth, baseline, this.ctx.twinId, this.ctx.sandbox.id, services)
     const selected = service === undefined ? services : services.filter(s => s.name === service)
     const entries = await Promise.all(selected.map(async svc =>
-      [svc.name, await fetchReceiptEntry(svc, baseline.services[svc.name]!.id)] as const))
+      [svc.name, await fetchReceiptEntry(this.auth, svc, baseline.services[svc.name]!.id)] as const))
     // Reset during the read invalidates the whole measurement, including any
     // pages fetched before history disappeared.
-    await validateBaseline(baseline, this.ctx.twinId, this.ctx.sandbox.id, await this.services().then(s => s.filter(v => isHttpUrl(v.control_url))))
+    await validateBaseline(this.auth, baseline, this.ctx.twinId, this.ctx.sandbox.id, await this.services().then(s => s.filter(v => isHttpUrl(v.control_url))))
     return { services: Object.fromEntries(entries), mode: 'gateway', integrity: 'verified', leaks: this.leaks() }
   }
 
   async control(service: string, resource: ControlResource, options?: ControlOptions): Promise<unknown> {
     const svc = (await this.services()).find(s => s.name === service)
     if (!svc) throw new VerisError(`unknown service '${service}'`)
-    return serviceControl(svc, resource, options)
+    return serviceControl(this.auth, svc, resource, options)
   }
 
   async assertTouched(service: string, match?: TouchMatcher): Promise<void> {
@@ -275,9 +282,13 @@ export class VerisApiImpl implements VerisApi {
     if (!services.length) return
     const probes = await Promise.all(services.map(async (svc) => {
       try {
-        const res = await fetch(`${svc.control_url}/veris/client/probe`, { method: 'POST' })
+        const res = await controlFetch(this.auth, svc, '/veris/client/probe', { method: 'POST' })
         return res.ok ? await res.json() as { answered?: boolean } : null
-      } catch { return null }
+      } catch (error) {
+        // A refused key must not read as "your app is not listening".
+        if (error instanceof InvalidCredentialsError) throw error
+        return null
+      }
     }))
     if (!probes.some((p) => p?.answered)) {
       throw new VerisError(

@@ -54,10 +54,12 @@ export function twinHosts(services: ServiceInfo[]): string[] {
  * be used at all.
  *
  * Narrow on purpose, and the narrowness is the point. Every http service of a
- * twin shares ONE hostname (`…/s/<twin>/<service>`), and that hostname also
- * serves `/veris/*` — including `/veris/reset`, which clears the log the
- * receipt is read from. Allowing it is a real cost, so it is paid only when a
- * service would otherwise be unreachable. See the note at the top of state.ts.
+ * twin shares ONE hostname (`…/s/<twin>/<service>`, and on a split sandbox the
+ * keyed control plane `…/c/<twin>/<service>` sits on that same host). On an
+ * older sandbox that hostname serves `/veris/*` keyless — including
+ * `/veris/reset`, which clears the log the receipt is read from. Allowing it is
+ * a real cost, so it is paid only when a service would otherwise be
+ * unreachable. See the note at the top of state.ts.
  */
 export function directTwinHosts(services: ServiceInfo[]): string[] {
   return twinHosts(services.filter((s) => isHttpUrl(s.url) && !(s.routes ?? []).length))

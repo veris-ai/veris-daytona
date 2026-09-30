@@ -11,7 +11,9 @@
 //                 has a log. Counting all of it credits this run with traffic
 //                 from before it began, so the read starts at a mark taken
 //                 when the run did — see fetchWatermark.
-import { VerisError } from './errors'
+import { InvalidCredentialsError, VerisError } from './errors'
+import { controlFetch } from './control-fetch'
+import type { ControlAuth } from './control-fetch'
 import type { ServiceInfo } from './control-plane'
 
 /** One intercepted request, from the twin's trace log. */
@@ -91,10 +93,8 @@ export function parseRequestsBody(body: unknown): { count: number; entries: Rece
   return { count: entries.length, entries, total: rows.length }
 }
 
-export async function readPage(svc: ServiceInfo, query: URLSearchParams): Promise<RawRow[]> {
-  const res = await fetch(`${svc.control_url.replace(/\/$/, '')}/veris/requests?${query}`, {
-    signal: AbortSignal.timeout(30_000), redirect: 'error',
-  })
+export async function readPage(auth: ControlAuth | undefined, svc: ServiceInfo, query: URLSearchParams): Promise<RawRow[]> {
+  const res = await controlFetch(auth, svc, `/veris/requests?${query}`)
   const text = await res.text()
   if (!res.ok) throw new VerisError(`could not read receipt for service '${svc.name}' (${res.status})`, { phase: 'receipt' })
   let body: unknown
@@ -104,17 +104,17 @@ export async function readPage(svc: ServiceInfo, query: URLSearchParams): Promis
   return rowsOf(body)
 }
 
-export async function fetchWatermark(svc: ServiceInfo): Promise<number> {
-  const rows = await readPage(svc, new URLSearchParams({ limit: '1', order: 'desc' }))
+export async function fetchWatermark(auth: ControlAuth | undefined, svc: ServiceInfo): Promise<number> {
+  const rows = await readPage(auth, svc, new URLSearchParams({ limit: '1', order: 'desc' }))
   if (rows.length > 1) throw new VerisError('request log ignored watermark limit', { phase: 'receipt' })
   return rows[0]?.id ?? 0
 }
 
 /** Read a finite window. The newest-id snapshot also detects servers that
  * silently cap pages below our requested limit. Never subtract row counts. */
-export async function fetchReceiptEntry(svc: ServiceInfo, sinceId = 0): Promise<ReceiptEntry> {
+export async function fetchReceiptEntry(auth: ControlAuth | undefined, svc: ServiceInfo, sinceId = 0): Promise<ReceiptEntry> {
   if (!Number.isSafeInteger(sinceId) || sinceId < 0) throw new VerisError('invalid receipt watermark', { phase: 'receipt' })
-  const end = await fetchWatermark(svc)
+  const end = await fetchWatermark(auth, svc)
   if (end < sinceId) throw new VerisError('receipt baseline invalid: log moved backwards; take a new baseline', { phase: 'receipt' })
   const entries: ReceiptRequest[] = []
   const raw: RawRow[] = []
@@ -124,9 +124,10 @@ export async function fetchReceiptEntry(svc: ServiceInfo, sinceId = 0): Promise<
     if (page >= MAX_PAGES) { incompleteReason = 'page-limit'; break }
     let rows: RawRow[]
     try {
-      rows = await readPage(svc, new URLSearchParams({ limit: String(PAGE_LIMIT), order: 'asc', since_id: String(mark) }))
+      rows = await readPage(auth, svc, new URLSearchParams({ limit: String(PAGE_LIMIT), order: 'asc', since_id: String(mark) }))
     } catch (error) {
-      if (!raw.length) throw error
+      // A refused key is not a partial read; never report it as a lower bound.
+      if (!raw.length || error instanceof InvalidCredentialsError) throw error
       incompleteReason = 'read-failed'; break
     }
     // Duplicate/backwards rows or an ignored cursor/order mean there may be

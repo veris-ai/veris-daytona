@@ -27,9 +27,10 @@ import type { VerisApi, VerisContext } from './veris-api'
 import { buildNetwork, dataPlaneEnv, isHttpUrl } from './network'
 import type { EgressMode } from './network'
 import { fetchWatermark } from './receipt'
+import type { ControlAuth } from './control-fetch'
 import { CA_CERT_PATH, sanitizeTrustEnv, verisNodeOptions } from './trust'
 import { gatewayIps, gatewayProxyUrl, installCa, installNodeProxyPreload, probeCanary } from './gateway'
-import { MissingCredentialsError, VerisError, VerisGatewayNotOfferedError } from './errors'
+import { InvalidCredentialsError, MissingCredentialsError, VerisError, VerisGatewayNotOfferedError } from './errors'
 import { requireVerisCredentials, resolveVerisCredentials } from './profile'
 import { SDK_VERSION } from './version'
 
@@ -205,7 +206,7 @@ export class Daytona extends BaseDaytona {
       // Where each service's log stands BEFORE anything can have run in the
       // sandbox: the receipt counts from here, so an attached twin's earlier
       // traffic is not credited to this run.
-      watermarks = await readWatermarks(services)
+      watermarks = await readWatermarks(controlPlane.controlAuth, services)
 
       // Veris-managed vars WIN over caller envs: a caller value for a
       // data-plane env_hint (e.g. DATABASE_URL) would silently point the code
@@ -555,12 +556,18 @@ export function sandboxCreateMessage(
  * Best-effort per service, on purpose: a mark that cannot be read falls back
  * to 0, which reads the whole log — the behaviour the receipt had before
  * watermarks existed. A twin whose log is briefly unreadable must not be a
- * failed create().
+ * failed create(). A 401 is the exception: see below.
  */
-async function readWatermarks(services: ServiceInfo[]): Promise<Record<string, number>> {
+async function readWatermarks(auth: ControlAuth, services: ServiceInfo[]): Promise<Record<string, number>> {
   const marks = await Promise.all(
     services.filter((s) => isHttpUrl(s.control_url)).map(async (svc) =>
-      [svc.name, await fetchWatermark(svc).catch(() => 0)] as const))
+      [svc.name, await fetchWatermark(auth, svc).catch((error: unknown) => {
+        // Except a refused key: falling back to 0 then would credit the
+        // twin's earlier traffic to this run, and every later control call
+        // would fail on the same key anyway.
+        if (error instanceof InvalidCredentialsError) throw error
+        return 0
+      })] as const))
   return Object.fromEntries(marks)
 }
 

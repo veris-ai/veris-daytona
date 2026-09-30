@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { Daytona as BaseDaytona } from '@daytona/sdk'
 import { Daytona, reapFailedCreate, sandboxCreateMessage } from '../../src/daytona'
-import { VerisError } from '../../src/errors'
+import { InvalidCredentialsError, VerisError } from '../../src/errors'
 
 const CREATE_ID = 'create-1'
 
@@ -180,7 +180,7 @@ describe('create() cleans up after a build that failed', () => {
     status: 'ready',
     services: [{
       name: 'stripe', status: 'ready',
-      url: 'https://twin.test/stripe', control_url: 'https://twin.test/stripe',
+      url: 'https://twin.test/stripe', control_url: 'https://twin.test/stripe', control_auth: 'api_key',
       routes: [{ host: 'api.stripe.com' }],
     }],
   }
@@ -230,6 +230,59 @@ describe('create() cleans up after a build that failed', () => {
     // ...and that variable reaches only the global agents. The preload gives
     // every http(s).Agent the proxy env; the trust flag rides beside it.
     expect((params.envVars as Record<string, string>).NODE_OPTIONS).toBe('--require /tmp/veris-node-proxy.cjs --use-openssl-ca')
+  })
+
+  it('reads the start-of-run watermark from control_url with the Veris API key', async () => {
+    controlPlane()
+    vi.spyOn(BaseDaytona.prototype, 'create').mockImplementation(async () => { throw SDK_ERROR })
+    vi.spyOn(BaseDaytona.prototype, 'list').mockImplementation(() => (async function* () {})() as never)
+    const daytona = new Daytona({
+      apiKey: 'dtn_key', useDeprecatedPolling: true,
+      veris: { apiKey: 'veris_key', environmentId: 'env_1', apiBase: 'https://api.veris.test' },
+    })
+    await daytona.create({ image: 'x' }).catch(() => undefined)
+    const read = vi.mocked(fetch).mock.calls.find(([u]) => String(u).includes('/veris/requests'))
+    expect(read).toBeDefined()
+    expect(new URL(String(read![0])).origin).toBe('https://twin.test')
+    expect(new Headers(read![1]?.headers).get('x-api-key')).toBe('veris_key')
+  })
+
+  /** controlPlane(), except /veris/requests answers `status`. */
+  function logAnswers(status: number, body: string) {
+    const calls = controlPlane()
+    const answer = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (url, init) => String(url).includes('/veris/requests')
+      ? new Response(body, { status })
+      : answer(url, init))
+    return calls
+  }
+
+  it('fails fast when the control plane refuses the key for the watermark, deleting its twin', async () => {
+    const calls = logAnswers(401, '{"detail":"invalid or missing API key"}')
+    const create = vi.spyOn(BaseDaytona.prototype, 'create')
+    const daytona = new Daytona({
+      apiKey: 'dtn_key', useDeprecatedPolling: true,
+      veris: { apiKey: 'veris_key', environmentId: 'env_1', apiBase: 'https://api.veris.test' },
+    })
+    const err = await daytona.create({ image: 'x' }).catch((e: unknown) => e)
+    // A silent 0 would credit the twin's earlier traffic to this run.
+    expect(err).toBeInstanceOf(InvalidCredentialsError)
+    expect(create).not.toHaveBeenCalled()
+    expect(calls.some((c) => c.startsWith('DELETE') && c.includes('/sandboxes/sbx_1'))).toBe(true)
+  })
+
+  it('still falls back to 0 when the log is unreadable for any other reason', async () => {
+    logAnswers(404, '{"detail":"Not Found"}')
+    const create = vi.spyOn(BaseDaytona.prototype, 'create').mockImplementation(async () => { throw SDK_ERROR })
+    vi.spyOn(BaseDaytona.prototype, 'list').mockImplementation(() => (async function* () {})() as never)
+    const daytona = new Daytona({
+      apiKey: 'dtn_key', useDeprecatedPolling: true,
+      veris: { apiKey: 'veris_key', environmentId: 'env_1', apiBase: 'https://api.veris.test' },
+    })
+    const err = await daytona.create({ image: 'x' }).catch((e: unknown) => e)
+    // Got as far as asking Daytona: the unreadable log did not fail the create.
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(err).not.toBeInstanceOf(InvalidCredentialsError)
   })
 
   it('deletes the leaked sandbox and names the reason Daytona recorded', async () => {

@@ -58,6 +58,7 @@ export { fetchManual, assertHttpControlPlane } from './state'
 export {
   VerisError,
   MissingCredentialsError,
+  InvalidCredentialsError,
   VerisGatewayUnreachableError,
   VerisGatewayNotOfferedError,
   ReceiptIntegrityError,
@@ -70,4 +71,5 @@ export type { VerisErrorPhase } from './errors'
 export { SDK_VERSION } from './version'
 
 export type { ReceiptBaseline } from './run-receipt'
+export type { ControlAuth } from './control-fetch'
 export type { ControlResource, ControlOptions } from './service-control'
