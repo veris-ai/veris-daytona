@@ -104,7 +104,8 @@ Set them yourself in `opencode.json` and your values win; the plugin only fills
 in what you have not.
 
 MCP calls run on your machine, and so do `verisTwin`, `verisControl` and
-`verisReceipt`: they call each service's `control_url` with your Veris API key.
+`verisReceipt`: they call each service's `control_url`, with your Veris API key
+when the service declares `control_auth: "api_key"`.
 On current (split) sandboxes that URL requires the key, and `/veris/*` is not
 served on the app URL or an intercepted vendor hostname, so code inside the
 sandbox cannot reach control routes. Older sandboxes (`control_auth` null) still

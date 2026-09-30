@@ -18,8 +18,9 @@ export interface ServiceInfo {
   /** Where /veris/* lives — always an http URL. On a split sandbox this is
    *  …/c/<sandbox>/<svc> and needs the API key (see control-fetch.ts). */
   control_url: string
-  /** "api_key" when control_url requires X-API-Key; null/absent on older
-   *  sandboxes whose control_url is still the keyless data URL. */
+  /** "api_key" when control_url requires X-API-Key — the only case the SDK
+   *  sends the key. null/absent on older or pinned sandboxes whose control_url
+   *  is still the keyless /s/ data URL; the key is never sent there. */
   control_auth?: 'api_key' | null | (string & {})
   env_hint?: string | null
   routes?: RouteEntry[] | null

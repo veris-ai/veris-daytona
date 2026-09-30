@@ -36,8 +36,10 @@ export function assertHttpControlPlane(svc: ServiceInfo): void {
  * the conventions its data follows. Prose, not JSON — it is written to be read
  * before designing anything against the service.
  *
- * `auth` carries the Veris API key. A split sandbox's control plane refuses a
- * call without it (InvalidCredentialsError); an older one ignores it.
+ * `auth` carries the Veris API key. It is sent only when the service declares
+ * `control_auth: "api_key"` (a split sandbox's control plane refuses a call
+ * without it: InvalidCredentialsError); an older keyless control_url gets
+ * nothing.
  */
 export async function fetchManual(svc: ServiceInfo, auth?: ControlAuth): Promise<string> {
   assertHttpControlPlane(svc)

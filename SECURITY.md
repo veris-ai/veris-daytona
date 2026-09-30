@@ -33,8 +33,11 @@ any of them, that is a vulnerability:
   `gateway.ts`. A response that can inject into any of those is a vulnerability.
 - **The Veris API key is never sent to a host named by sandbox labels.** A
   compromised sandbox must not be able to redirect it. Beyond `/v1`, it goes
-  only to the origin of each service's `control_url` as returned by the
-  authenticated API, with redirects refused (`control-fetch.ts`).
+  only to the origin of a service's `control_url` as returned by the
+  authenticated API, only when that service declares `control_auth:
+  "api_key"`, and with redirects refused (`control-fetch.ts`). A keyless
+  `control_url` (`control_auth` null or absent) is the twin's data URL and
+  never receives it.
 
 ## What it is not responsible for
 

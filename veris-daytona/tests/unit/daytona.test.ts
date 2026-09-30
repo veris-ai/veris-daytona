@@ -180,7 +180,7 @@ describe('create() cleans up after a build that failed', () => {
     status: 'ready',
     services: [{
       name: 'stripe', status: 'ready',
-      url: 'https://twin.test/stripe', control_url: 'https://twin.test/stripe',
+      url: 'https://twin.test/stripe', control_url: 'https://twin.test/stripe', control_auth: 'api_key',
       routes: [{ host: 'api.stripe.com' }],
     }],
   }

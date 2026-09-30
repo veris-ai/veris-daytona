@@ -124,11 +124,50 @@ describe('the key stays on the control origin', () => {
     expect(calls.map(c => c.url.origin)).toEqual([CONTROL])
   })
 
-  it('still works against an older keyless control_url (control_auth null)', async () => {
-    const legacy: ServiceInfo = { ...split, control_auth: null }
-    const f = vi.fn(async () => new Response('# legacy'))
+  // An older/pinned sandbox's control_url is the /s/ data URL — the twin the
+  // code under test talks to. The Veris key must never go there.
+  it.each([
+    ['null', { control_auth: null }],
+    ['absent', { control_auth: undefined }],
+  ] as const)('sends no key when control_auth is %s, and still works', async (_label, over) => {
+    const legacy: ServiceInfo = { ...split, ...over, control_url: 'https://data.veris.test/s/sbx/stripe' }
+    if (over.control_auth === undefined) delete legacy.control_auth
+    const f = vi.fn(async (u: string, _i?: RequestInit) =>
+      new Response(u.endsWith('/veris/manual') ? '# legacy' : '{"ok":true}'))
     vi.stubGlobal('fetch', f)
     expect(await fetchManual(legacy, auth)).toBe('# legacy')
+    await serviceControl(auth, legacy, 'data', { method: 'POST', body: { data: {} } })
+    // Even a key a caller slipped into the headers is stripped.
+    await controlFetch(auth, legacy, '/veris/manual', { headers: { 'X-API-Key': KEY } })
+    expect(f).toHaveBeenCalledTimes(3)
+    for (const [, init] of f.mock.calls) {
+      expect(new Headers(init?.headers).get('x-api-key')).toBeNull()
+      expect(init?.redirect).toBe('error')
+    }
+  })
+
+  it('sends no key through sbx.veris for a keyless service, even though ControlPlane holds one', async () => {
+    const legacy: ServiceInfo = { ...split, control_auth: null, control_url: 'https://data.veris.test/s/sbx/stripe' }
+    const f = vi.fn(async (_u: string, _i?: RequestInit) => new Response(JSON.stringify({ requests: [], answered: true })))
+    vi.stubGlobal('fetch', f)
+    const cp = new ControlPlane({ apiKey: KEY, apiBase: 'https://api.veris.test', sdkVersion: 't' })
+    vi.spyOn(cp, 'services').mockResolvedValue([legacy])
+    vi.spyOn(cp, 'updateSandbox').mockResolvedValue()
+    const veris = new VerisApiImpl({ sandbox: { id: 'box' } as never, controlPlane: cp, twinId: 'twin',
+      environmentId: 'env', egress: 'strict', canaryHost: 'canary.invalid', ownsTwin: true })
+    await veris.receipt('stripe')
+    await veris.control('stripe', 'schema')
+    await veris.deliverTo('https://app.example.test')
+    expect(f.mock.calls.length).toBeGreaterThan(0)
+    for (const [, init] of f.mock.calls) expect(new Headers(init?.headers).get('x-api-key')).toBeNull()
+  })
+
+  it('names the missing control_auth when a keyless service answers 401', async () => {
+    const legacy: ServiceInfo = { ...split, control_auth: null }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"detail":"invalid or missing API key"}', { status: 401 })))
+    const err = await fetchManual(legacy, auth).catch(e => e)
+    expect(err).toBeInstanceOf(InvalidCredentialsError)
+    expect(err.message).toMatch(/does not declare control_auth "api_key"/)
   })
 })
 
